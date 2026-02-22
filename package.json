@@ -15,8 +15,8 @@
 	],
 	"main": "./dist/extension.js",
 	"scripts": {
-		"build": "node esbuild.js",
-		"build:prod": "node esbuild.js --production",
+		"build": "node esbuild.js && node scripts/deploy.js",
+		"build:prod": "node esbuild.js --production && node scripts/deploy.js",
 		"watch": "node esbuild.js --watch",
 		"typecheck": "tsc --noEmit",
 		"lint": "eslint src/ media/webview/",
@@ -116,6 +116,14 @@
 			{
 				"command": "ccr.sendFileToSession",
 				"title": "Send to Claude Session"
+			},
+			{
+				"command": "ccr.undo",
+				"title": "Claude Code Review: Undo Last Review Action"
+			},
+			{
+				"command": "ccr.redo",
+				"title": "Claude Code Review: Redo Review Action"
 			}
 		],
 		"menus": {
@@ -182,6 +190,16 @@
 				"command": "ccr.prevHunk",
 				"key": "cmd+[",
 				"when": "ccr.reviewActive"
+			},
+			{
+				"command": "ccr.undo",
+				"key": "cmd+z",
+				"when": "ccr.canUndoReview && editorTextFocus"
+			},
+			{
+				"command": "ccr.redo",
+				"key": "cmd+shift+z",
+				"when": "ccr.canRedoReview && editorTextFocus"
 			}
 		],
 		"configuration": {

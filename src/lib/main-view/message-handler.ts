@@ -28,7 +28,9 @@ export function handleWebviewMessage(
 	msg: Record<string, unknown>,
 	ctx: MessageContext,
 ): MessageResult {
-	log.log(`webview msg: ${msg.type as string}`);
+	if (msg.type !== "terminal-input") {
+		log.log(`webview msg: ${msg.type as string}`);
+	}
 
 	let webviewReady = ctx.webviewReady;
 	let pendingHookStatus = ctx.pendingHookStatus;
@@ -39,6 +41,9 @@ export function handleWebviewMessage(
 			webviewReady = true;
 			ctx.sessionMgr.refreshClaudeSessions();
 			ctx.sessionMgr.restoreSessions();
+			// Refresh review state in case restore() completed before webview was ready
+			// eslint-disable-next-line @typescript-eslint/no-require-imports
+			(require("../state") as { refreshAll: () => void }).refreshAll();
 			ctx.postMessage({
 				type: "settings-init",
 				cliCommand: vscode.workspace

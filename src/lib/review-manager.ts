@@ -10,7 +10,7 @@ import { saveReviewState, loadReviewState, clearReviewState } from "./persistenc
 import { FileReview, buildMergedContent, buildFinalContent, rebuildMerged } from "./review";
 import { computeDiff } from "./diff";
 import { applyDecorations, clearDecorations } from "./decorations";
-import { initHistory, recordSnapshot, setApplyingEdit, clearHistory, clearAllHistories } from "./undo-history";
+import { initHistory, pushUndoState, popUndoState, pushRedoState, popRedoState, setApplyingEdit, clearHistory, clearAllHistories } from "./undo-history";
 import type { ChangeType, ReviewSnapshot } from "../types";
 
 interface ICodeLensProvider {
@@ -123,7 +123,6 @@ export class ReviewManager implements vscode.Disposable {
 
 	private applyToOpenEditor(filePath: string, review: import("../types").IFileReview): void {
 		initHistory(filePath);
-		recordSnapshot(filePath, review);
 		this.applyContentViaEdit(filePath, review.mergedLines.join("\n"));
 	}
 
@@ -132,9 +131,11 @@ export class ReviewManager implements vscode.Disposable {
 			(e) => e.document.uri.fsPath === filePath,
 		);
 		if (!editor) {
+			log.log(`ReviewManager.applyContentViaEdit: no editor for ${filePath}, writing to disk`);
 			fs.writeFileSync(filePath, newContent, "utf8");
 			return;
 		}
+		log.log(`ReviewManager.applyContentViaEdit: applying via TextEditor.edit for ${filePath} (${newContent.length} chars)`);
 
 		setApplyingEdit(filePath, true);
 		try {
@@ -148,6 +149,7 @@ export class ReviewManager implements vscode.Disposable {
 				(eb) => eb.replace(fullRange, newContent),
 				{ undoStopBefore: true, undoStopAfter: true },
 			);
+			await doc.save();
 		} finally {
 			setApplyingEdit(filePath, false);
 		}
@@ -166,10 +168,13 @@ export class ReviewManager implements vscode.Disposable {
 		const hunk = review.hunks.find((h) => h.id === hunkId);
 		if (!hunk || hunk.resolved) return;
 
-		recordSnapshot(filePath, review);
+		const preHunkState = review.hunks.map((h) => `${h.id}:${h.resolved ? "R" : "U"}`).join(",");
+		log.log(`ReviewManager.resolveHunk: BEFORE push, hunks=[${preHunkState}], about to resolve hunkId=${hunkId}`);
+		pushUndoState(filePath, review);
 
 		hunk.resolved = true;
 		hunk.accepted = accept;
+		log.log(`ReviewManager.resolveHunk: file=${filePath}, hunkId=${hunkId}, accept=${accept}, remaining=${review.unresolvedCount}`);
 
 		if (review.isFullyResolved) {
 			await this.finalizeFile(filePath);
@@ -179,7 +184,6 @@ export class ReviewManager implements vscode.Disposable {
 			if (this.currentHunkIndex >= newCount) {
 				this.currentHunkIndex = Math.max(0, newCount - 1);
 			}
-			recordSnapshot(filePath, review);
 			await this.applyContentViaEdit(filePath, review.mergedLines.join("\n"));
 		}
 		this.scheduleSave();
@@ -188,6 +192,7 @@ export class ReviewManager implements vscode.Disposable {
 	async resolveAllHunks(filePath: string, accept: boolean): Promise<void> {
 		const review = state.activeReviews.get(filePath);
 		if (!review) return;
+		pushUndoState(filePath, review);
 		for (const h of review.hunks) {
 			if (!h.resolved) {
 				h.resolved = true;
@@ -241,7 +246,6 @@ export class ReviewManager implements vscode.Disposable {
 		if (!review) return;
 
 		initHistory(filePath);
-		recordSnapshot(filePath, review);
 
 		const mergedContent = review.mergedLines.join("\n");
 		fs.writeFileSync(filePath, mergedContent, "utf8");
@@ -456,10 +460,12 @@ export class ReviewManager implements vscode.Disposable {
 		const review = state.activeReviews.get(filePath);
 		if (!review) return;
 
-		recordSnapshot(filePath, review);
+		// NOTE: undo state was already pushed by resolveHunk/resolveAllHunks BEFORE mutation.
 
 		const changeType = review.changeType;
 		const allRejected = review.hunks.every((h) => !h.accepted);
+		const allAccepted = review.hunks.every((h) => h.accepted);
+		log.log(`ReviewManager.finalizeFile: ${filePath}, type=${changeType}, allAccepted=${allAccepted}, allRejected=${allRejected}`);
 
 		state.activeReviews.delete(filePath);
 
@@ -509,9 +515,77 @@ export class ReviewManager implements vscode.Disposable {
 		}
 	}
 
+	async undoResolve(): Promise<void> {
+		const editor = vscode.window.activeTextEditor;
+		if (!editor) return;
+		const fsPath = editor.document.uri.fsPath;
+
+		// Get current state to push to redo stack
+		const currentReview = state.activeReviews.get(fsPath);
+
+		const snapshot = popUndoState(fsPath);
+		if (!snapshot) {
+			log.log(`ReviewManager.undoResolve: no undo state for ${fsPath}`);
+			return;
+		}
+
+		// Push current state to redo (if we have a review, save it; if finalized, save snapshot of finalized state)
+		if (currentReview) {
+			pushRedoState(fsPath, currentReview);
+		} else {
+			// After finalize — push a "finalized" marker with all hunks resolved
+			const finalizedSnapshot: ReviewSnapshot = {
+				...snapshot,
+				hunks: snapshot.hunks.map((h) => ({ ...h, resolved: true, accepted: true })),
+			};
+			pushRedoState(fsPath, finalizedSnapshot);
+		}
+
+		log.log(`ReviewManager.undoResolve: restoring ${fsPath}, unresolved=${snapshot.hunks.filter((h) => !h.resolved).length}`);
+		this.restoreFromSnapshot(fsPath, snapshot);
+		await this.applyContentViaEdit(fsPath, snapshot.mergedLines.join("\n"));
+	}
+
+	async redoResolve(): Promise<void> {
+		const editor = vscode.window.activeTextEditor;
+		if (!editor) return;
+		const fsPath = editor.document.uri.fsPath;
+
+		const currentReview = state.activeReviews.get(fsPath);
+		const snapshot = popRedoState(fsPath);
+		if (!snapshot) {
+			log.log(`ReviewManager.redoResolve: no redo state for ${fsPath}`);
+			return;
+		}
+
+		// Push current to undo
+		if (currentReview) {
+			pushUndoState(fsPath, currentReview);
+		}
+
+		const allResolved = snapshot.hunks.every((h) => h.resolved);
+		if (allResolved) {
+			// Re-finalize: apply final content and remove from review
+			log.log(`ReviewManager.redoResolve: re-finalizing ${fsPath}`);
+			// Temporarily restore to get finalContent
+			this.restoreFromSnapshot(fsPath, snapshot);
+			const review = state.activeReviews.get(fsPath);
+			if (review) {
+				review.hunks = JSON.parse(JSON.stringify(snapshot.hunks));
+				await this.finalizeFile(fsPath);
+			}
+		} else {
+			log.log(`ReviewManager.redoResolve: restoring ${fsPath}, unresolved=${snapshot.hunks.filter((h) => !h.resolved).length}`);
+			this.restoreFromSnapshot(fsPath, snapshot);
+			await this.applyContentViaEdit(fsPath, snapshot.mergedLines.join("\n"));
+		}
+	}
+
 	restoreFromSnapshot(fsPath: string, snapshot: ReviewSnapshot): void {
+		const unresolvedCount = snapshot.hunks.filter((h) => !h.resolved).length;
 		let review = state.activeReviews.get(fsPath);
 		if (!review) {
+			log.log(`ReviewManager.restoreFromSnapshot: re-creating review for ${fsPath}, unresolved=${unresolvedCount}`);
 			// Undo after finalize — re-enter review
 			review = new FileReview(
 				snapshot.filePath,
@@ -525,9 +599,16 @@ export class ReviewManager implements vscode.Disposable {
 			this._onReviewStateChange.fire(true);
 		}
 
+		if (state.activeReviews.has(fsPath)) {
+			log.log(`ReviewManager.restoreFromSnapshot: updating existing review for ${fsPath}, unresolved=${unresolvedCount}`);
+		}
 		review.hunks = JSON.parse(JSON.stringify(snapshot.hunks));
 		(review as FileReview).mergedLines = [...snapshot.mergedLines];
 		(review as FileReview).hunkRanges = snapshot.hunkRanges.map((r) => ({ ...r }));
+
+		const hunkDetail = review.hunks.map((h) => `${h.id}:${h.resolved ? "R" : "U"}`).join(",");
+		const rangeDetail = (review as FileReview).hunkRanges.map((r) => `h${r.hunkId}@${r.removedStart}-${r.removedEnd}/${r.addedStart}-${r.addedEnd}`).join(", ");
+		log.log(`ReviewManager.restoreFromSnapshot: hunks=[${hunkDetail}], ranges=[${rangeDetail}]`);
 
 		const editor = vscode.window.visibleTextEditors.find(
 			(e) => e.document.uri.fsPath === fsPath,
@@ -553,9 +634,12 @@ export class ReviewManager implements vscode.Disposable {
 
 	dispose(): void {
 		// Restore files to modifiedContent before saving — prevents merged content on disk
+		const count = state.activeReviews.size;
+		log.log(`ReviewManager.dispose: restoring ${count} files to modifiedContent`);
 		for (const [fp, review] of state.activeReviews) {
 			try {
 				fs.writeFileSync(fp, review.modifiedContent, "utf8");
+				log.log(`ReviewManager.dispose: restored ${fp}`);
 			} catch {}
 		}
 		this.saveNow();

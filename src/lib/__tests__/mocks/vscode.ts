@@ -72,6 +72,15 @@ export class Disposable {
 	}
 }
 
+export class CodeLens {
+	range: Range;
+	command?: { title: string; tooltip?: string; command: string; arguments?: unknown[] };
+	constructor(range: Range, command?: CodeLens["command"]) {
+		this.range = range;
+		this.command = command;
+	}
+}
+
 export const workspace = {
 	openTextDocument: vi.fn().mockResolvedValue({ uri: { fsPath: "" } }),
 	onDidChangeTextDocument: vi.fn().mockReturnValue({ dispose: vi.fn() }),

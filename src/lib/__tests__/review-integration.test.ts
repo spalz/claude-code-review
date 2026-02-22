@@ -8,12 +8,16 @@ vi.mock("../decorations", () => ({
 }));
 vi.mock("../undo-history", () => ({
 	initHistory: vi.fn(),
-	recordSnapshot: vi.fn(),
+	pushUndoState: vi.fn(),
+	popUndoState: vi.fn(),
+	pushRedoState: vi.fn(),
+	popRedoState: vi.fn(),
+	hasUndoState: vi.fn().mockReturnValue(false),
+	hasRedoState: vi.fn().mockReturnValue(false),
 	setApplyingEdit: vi.fn(),
 	isApplyingEdit: vi.fn().mockReturnValue(false),
 	clearHistory: vi.fn(),
 	clearAllHistories: vi.fn(),
-	lookupSnapshot: vi.fn().mockReturnValue(undefined),
 }));
 
 const mockFs = vi.hoisted(() => ({

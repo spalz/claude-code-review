@@ -6,15 +6,22 @@ vi.mock("../decorations", () => ({
 	applyDecorations: vi.fn(),
 	clearDecorations: vi.fn(),
 }));
-vi.mock("../undo-history", () => ({
+const mockUndoHistory = vi.hoisted(() => ({
 	initHistory: vi.fn(),
 	recordSnapshot: vi.fn(),
+	pushUndoState: vi.fn(),
+	popUndoState: vi.fn().mockReturnValue(undefined),
+	pushRedoState: vi.fn(),
+	popRedoState: vi.fn().mockReturnValue(undefined),
+	hasUndoState: vi.fn().mockReturnValue(false),
+	hasRedoState: vi.fn().mockReturnValue(false),
 	setApplyingEdit: vi.fn(),
 	isApplyingEdit: vi.fn().mockReturnValue(false),
 	clearHistory: vi.fn(),
 	clearAllHistories: vi.fn(),
 	lookupSnapshot: vi.fn().mockReturnValue(undefined),
 }));
+vi.mock("../undo-history", () => mockUndoHistory);
 
 const mockFs = vi.hoisted(() => ({
 	readFileSync: vi.fn(),
@@ -40,8 +47,10 @@ const mockPersistence = vi.hoisted(() => ({
 }));
 vi.mock("../persistence", () => mockPersistence);
 
+import * as vscode from "vscode";
 import * as state from "../state";
 import { ReviewManager } from "../review-manager";
+import type { ReviewSnapshot } from "../../types";
 
 function setupManager(): ReviewManager {
 	const mgr = new ReviewManager("/ws");
@@ -644,5 +653,288 @@ describe("finalizeFile", () => {
 		mockFs.readFileSync.mockReturnValue("");
 		await mgr.resolveAllHunks("/ws/del.ts", false);
 		expect(mockFs.writeFileSync).toHaveBeenCalledWith("/ws/del.ts", "original content", "utf8");
+	});
+});
+
+describe("undoResolve / redoResolve", () => {
+	function makeSnapshot(review: ReturnType<typeof state.activeReviews.get>, overrides?: Partial<ReviewSnapshot>): ReviewSnapshot {
+		return {
+			filePath: review!.filePath,
+			originalContent: review!.originalContent,
+			modifiedContent: review!.modifiedContent,
+			changeType: review!.changeType,
+			hunks: JSON.parse(JSON.stringify(review!.hunks)),
+			mergedLines: [...review!.mergedLines],
+			hunkRanges: review!.hunkRanges.map(r => ({ ...r })),
+			...overrides,
+		};
+	}
+
+	function setActiveEditor(fsPath: string): void {
+		const mockEditor = {
+			document: {
+				uri: { fsPath },
+				lineCount: 10,
+				lineAt: () => ({ text: "" }),
+				save: vi.fn().mockResolvedValue(true),
+			},
+			edit: vi.fn().mockResolvedValue(true),
+			revealRange: vi.fn(),
+			selection: null,
+		};
+		(vscode.window as any).activeTextEditor = mockEditor;
+		(vscode.window as any).visibleTextEditors = [mockEditor];
+	}
+
+	function clearActiveEditor(): void {
+		(vscode.window as any).activeTextEditor = null;
+		(vscode.window as any).visibleTextEditors = [];
+	}
+
+	afterEach(() => {
+		clearActiveEditor();
+	});
+
+	it("undoResolve pops undo stack and restores review state (hunks become unresolved)", async () => {
+		const mgr = setupManager();
+		mgr.addFile("/ws/file.ts");
+		const review = state.activeReviews.get("/ws/file.ts")!;
+
+		// Save snapshot with unresolved hunk
+		const snapshot = makeSnapshot(review);
+
+		// Resolve the hunk
+		review.hunks[0].resolved = true;
+		review.hunks[0].accepted = true;
+
+		setActiveEditor("/ws/file.ts");
+		mockUndoHistory.popUndoState.mockReturnValueOnce(snapshot);
+
+		await mgr.undoResolve();
+
+		const restored = state.activeReviews.get("/ws/file.ts")!;
+		expect(restored.hunks[0].resolved).toBe(false);
+		expect(restored.hunks[0].accepted).toBe(false);
+	});
+
+	it("undoResolve pushes current state to redo stack", async () => {
+		const mgr = setupManager();
+		mgr.addFile("/ws/file.ts");
+		const review = state.activeReviews.get("/ws/file.ts")!;
+
+		const snapshot = makeSnapshot(review);
+		review.hunks[0].resolved = true;
+		review.hunks[0].accepted = true;
+
+		setActiveEditor("/ws/file.ts");
+		mockUndoHistory.popUndoState.mockReturnValueOnce(snapshot);
+
+		// Capture the state at call time since restoreFromSnapshot mutates the review
+		let capturedHunks: any[] = [];
+		mockUndoHistory.pushRedoState.mockImplementationOnce((_path: string, rev: any) => {
+			capturedHunks = JSON.parse(JSON.stringify(rev.hunks));
+		});
+
+		await mgr.undoResolve();
+
+		expect(capturedHunks).toHaveLength(1);
+		expect(capturedHunks[0].resolved).toBe(true);
+		expect(capturedHunks[0].accepted).toBe(true);
+	});
+
+	it("undoResolve after finalizeFile re-creates the review", async () => {
+		const mgr = setupManager();
+		mgr.addFile("/ws/file.ts");
+		const review = state.activeReviews.get("/ws/file.ts")!;
+
+		// Save snapshot before finalize
+		const snapshot = makeSnapshot(review);
+
+		// Finalize (removes from activeReviews)
+		await mgr.resolveAllHunks("/ws/file.ts", true);
+		expect(state.activeReviews.has("/ws/file.ts")).toBe(false);
+
+		setActiveEditor("/ws/file.ts");
+		mockUndoHistory.popUndoState.mockReturnValueOnce(snapshot);
+
+		await mgr.undoResolve();
+
+		// Review should be re-created
+		expect(state.activeReviews.has("/ws/file.ts")).toBe(true);
+		const restored = state.activeReviews.get("/ws/file.ts")!;
+		expect(restored.hunks[0].resolved).toBe(false);
+	});
+
+	it("undoResolve after finalize pushes finalized marker to redo", async () => {
+		const mgr = setupManager();
+		mgr.addFile("/ws/file.ts");
+		const review = state.activeReviews.get("/ws/file.ts")!;
+		const snapshot = makeSnapshot(review);
+
+		await mgr.resolveAllHunks("/ws/file.ts", true);
+		expect(state.activeReviews.has("/ws/file.ts")).toBe(false);
+
+		setActiveEditor("/ws/file.ts");
+		mockUndoHistory.popUndoState.mockReturnValueOnce(snapshot);
+		mockUndoHistory.pushRedoState.mockClear();
+
+		await mgr.undoResolve();
+
+		// Should push a finalized snapshot (all hunks resolved) to redo
+		expect(mockUndoHistory.pushRedoState).toHaveBeenCalledTimes(1);
+		const pushedSnapshot = mockUndoHistory.pushRedoState.mock.calls[0][1] as ReviewSnapshot;
+		expect(pushedSnapshot.hunks.every((h: any) => h.resolved && h.accepted)).toBe(true);
+	});
+
+	it("undoResolve with no undo state does nothing", async () => {
+		const mgr = setupManager();
+		mgr.addFile("/ws/file.ts");
+		const review = state.activeReviews.get("/ws/file.ts")!;
+		review.hunks[0].resolved = true;
+
+		setActiveEditor("/ws/file.ts");
+		mockUndoHistory.popUndoState.mockReturnValueOnce(undefined);
+
+		await mgr.undoResolve();
+
+		// State unchanged
+		expect(review.hunks[0].resolved).toBe(true);
+	});
+
+	it("undoResolve with no active editor does nothing", async () => {
+		const mgr = setupManager();
+		mgr.addFile("/ws/file.ts");
+		const review = state.activeReviews.get("/ws/file.ts")!;
+		review.hunks[0].resolved = true;
+
+		clearActiveEditor();
+
+		await mgr.undoResolve();
+
+		expect(mockUndoHistory.popUndoState).not.toHaveBeenCalled();
+		expect(review.hunks[0].resolved).toBe(true);
+	});
+
+	it("redoResolve pops redo stack and restores state", async () => {
+		const mgr = setupManager();
+		mgr.addFile("/ws/file.ts");
+		const review = state.activeReviews.get("/ws/file.ts")!;
+
+		// Add a second unresolved hunk so not all are resolved (avoids re-finalize)
+		const secondHunk = { ...review.hunks[0], id: 1, resolved: false, accepted: false };
+		const redoSnapshot = makeSnapshot(review, {
+			hunks: [
+				{ ...review.hunks[0], resolved: true, accepted: true },
+				secondHunk,
+			],
+		});
+
+		setActiveEditor("/ws/file.ts");
+		mockUndoHistory.popRedoState.mockReturnValueOnce(redoSnapshot);
+
+		await mgr.redoResolve();
+
+		const restored = state.activeReviews.get("/ws/file.ts")!;
+		expect(restored.hunks[0].resolved).toBe(true);
+		expect(restored.hunks[0].accepted).toBe(true);
+		expect(restored.hunks[1].resolved).toBe(false);
+	});
+
+	it("redoResolve pushes current state to undo stack", async () => {
+		const mgr = setupManager();
+		mgr.addFile("/ws/file.ts");
+		const review = state.activeReviews.get("/ws/file.ts")!;
+
+		// Add second unresolved hunk so redo doesn't trigger finalize
+		const secondHunk = { ...review.hunks[0], id: 1, resolved: false, accepted: false };
+		const redoSnapshot = makeSnapshot(review, {
+			hunks: [
+				{ ...review.hunks[0], resolved: true, accepted: true },
+				secondHunk,
+			],
+		});
+
+		setActiveEditor("/ws/file.ts");
+		mockUndoHistory.popRedoState.mockReturnValueOnce(redoSnapshot);
+
+		// Capture at call time since restoreFromSnapshot mutates the review
+		let capturedHunks: any[] = [];
+		mockUndoHistory.pushUndoState.mockImplementationOnce((_path: string, rev: any) => {
+			capturedHunks = JSON.parse(JSON.stringify(rev.hunks));
+		});
+
+		await mgr.redoResolve();
+
+		expect(capturedHunks).toHaveLength(1);
+		// Current review (pre-redo) had unresolved hunks
+		expect(capturedHunks[0].resolved).toBe(false);
+	});
+
+	it("redoResolve when all hunks resolved triggers re-finalize", async () => {
+		const mgr = setupManager();
+		mgr.addFile("/ws/file.ts");
+		const review = state.activeReviews.get("/ws/file.ts")!;
+
+		// Redo snapshot with ALL hunks resolved
+		const finalizedSnapshot = makeSnapshot(review, {
+			hunks: review.hunks.map(h => ({ ...h, resolved: true, accepted: true })),
+		});
+
+		setActiveEditor("/ws/file.ts");
+		mockUndoHistory.popRedoState.mockReturnValueOnce(finalizedSnapshot);
+
+		await mgr.redoResolve();
+
+		// File should be finalized (removed from activeReviews)
+		expect(state.activeReviews.has("/ws/file.ts")).toBe(false);
+	});
+
+	it("redoResolve with no redo state does nothing", async () => {
+		const mgr = setupManager();
+		mgr.addFile("/ws/file.ts");
+
+		setActiveEditor("/ws/file.ts");
+		mockUndoHistory.popRedoState.mockReturnValueOnce(undefined);
+
+		const reviewBefore = JSON.stringify(state.activeReviews.get("/ws/file.ts")!.hunks);
+		await mgr.redoResolve();
+		const reviewAfter = JSON.stringify(state.activeReviews.get("/ws/file.ts")!.hunks);
+		expect(reviewAfter).toBe(reviewBefore);
+	});
+
+	it("full cycle: resolve → undoResolve → redoResolve", async () => {
+		const mgr = setupManager();
+		mgr.addFile("/ws/file.ts");
+		const review = state.activeReviews.get("/ws/file.ts")!;
+		const hunkId = review.hunks[0].id;
+
+		// Capture pre-resolve snapshot
+		const preResolveSnapshot = makeSnapshot(review);
+
+		setActiveEditor("/ws/file.ts");
+
+		// Step 1: resolve hunk (this finalizes since single hunk)
+		await mgr.resolveHunk("/ws/file.ts", hunkId, true);
+		expect(state.activeReviews.has("/ws/file.ts")).toBe(false);
+
+		// Step 2: undo → restores pre-resolve state
+		mockUndoHistory.popUndoState.mockReturnValueOnce(preResolveSnapshot);
+		await mgr.undoResolve();
+
+		expect(state.activeReviews.has("/ws/file.ts")).toBe(true);
+		const afterUndo = state.activeReviews.get("/ws/file.ts")!;
+		expect(afterUndo.hunks[0].resolved).toBe(false);
+
+		// Step 3: redo → re-finalizes
+		// pushRedoState was called during undo; simulate popRedoState returning the finalized state
+		const finalizedSnapshot = makeSnapshot(afterUndo, {
+			hunks: afterUndo.hunks.map(h => ({ ...h, resolved: true, accepted: true })),
+		});
+		mockUndoHistory.popRedoState.mockReturnValueOnce(finalizedSnapshot);
+
+		await mgr.redoResolve();
+
+		// File should be finalized again
+		expect(state.activeReviews.has("/ws/file.ts")).toBe(false);
 	});
 });

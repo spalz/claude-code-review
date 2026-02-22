@@ -152,7 +152,9 @@ export function activate(context: vscode.ExtensionContext): void {
 					}
 				},
 			],
-			["ccr.prevFile", () => actions.navigateFile(-1)],
+			["ccr.undo", () => reviewManager?.undoResolve()],
+		["ccr.redo", () => reviewManager?.redoResolve()],
+		["ccr.prevFile", () => actions.navigateFile(-1)],
 			["ccr.nextFile", () => actions.navigateFile(1)],
 			["ccr.prevHunk", () => actions.navigateHunk(-1)],
 			["ccr.nextHunk", () => actions.navigateHunk(1)],
@@ -220,14 +222,11 @@ export function activate(context: vscode.ExtensionContext): void {
 			},
 		});
 
-		// --- Document listener for undo/redo ---
-		context.subscriptions.push(
-			registerDocumentListener(context, (fsPath, snapshot) => {
-				reviewManager!.restoreFromSnapshot(fsPath, snapshot);
-			}),
-		);
+		// --- Document listener for cleanup ---
+		context.subscriptions.push(registerDocumentListener(context));
 
 		// --- Restore persisted review state ---
+		// Restore state immediately, but defer UI refresh until after webview is ready
 		reviewManager.restore().then(async (restored) => {
 			if (restored) {
 				log.log("Review state restored from persistence");
