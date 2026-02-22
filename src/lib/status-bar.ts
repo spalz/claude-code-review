@@ -36,7 +36,7 @@ export function createReviewStatusBar(
 	// Mode 2: hunk navigation
 	hunkPrevItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 10);
 	hunkPrevItem.text = "$(chevron-left)";
-	hunkPrevItem.tooltip = "Previous change in this file";
+	hunkPrevItem.tooltip = "Previous change (⌘[)";
 	hunkPrevItem.command = "ccr.prevHunk";
 
 	hunkCounterItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 9);
@@ -44,7 +44,7 @@ export function createReviewStatusBar(
 
 	hunkNextItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 8);
 	hunkNextItem.text = "$(chevron-right)";
-	hunkNextItem.tooltip = "Next change in this file";
+	hunkNextItem.tooltip = "Next change (⌘])";
 	hunkNextItem.command = "ccr.nextHunk";
 
 	// Separator
@@ -52,16 +52,16 @@ export function createReviewStatusBar(
 	sep1Item.text = "|";
 
 	// Mode 2: file actions
-	keepFileItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 6);
-	keepFileItem.text = "$(check) Keep";
+	undoFileItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 6);
+	undoFileItem.text = "$(discard) Undo ⌘N";
+	undoFileItem.tooltip = "Reject all changes in this file";
+	undoFileItem.command = "ccr.undoCurrentFile";
+
+	keepFileItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 5);
+	keepFileItem.text = "$(check) Keep ⌘Y";
 	keepFileItem.tooltip = "Accept all changes in this file";
 	keepFileItem.command = "ccr.keepCurrentFile";
 	keepFileItem.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
-
-	undoFileItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 5);
-	undoFileItem.text = "$(discard) Undo";
-	undoFileItem.tooltip = "Reject all changes in this file";
-	undoFileItem.command = "ccr.undoCurrentFile";
 
 	// Separator
 	sep2Item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 4);
@@ -88,8 +88,8 @@ export function createReviewStatusBar(
 		hunkCounterItem,
 		hunkNextItem,
 		sep1Item,
-		keepFileItem,
 		undoFileItem,
+		keepFileItem,
 		sep2Item,
 		filePrevItem,
 		fileCounterItem,
@@ -99,7 +99,6 @@ export function createReviewStatusBar(
 		context.subscriptions.push(item);
 	}
 
-	// React to editor changes
 	_editorDisposable = vscode.window.onDidChangeActiveTextEditor(() => {
 		updateReviewStatusBar();
 	});
@@ -118,8 +117,8 @@ export function hideMode2(): void {
 	hunkCounterItem.hide();
 	hunkNextItem.hide();
 	sep1Item.hide();
-	keepFileItem.hide();
 	undoFileItem.hide();
+	keepFileItem.hide();
 	sep2Item.hide();
 	filePrevItem.hide();
 	fileCounterItem.hide();
@@ -137,7 +136,6 @@ export function showMode1(remaining: string[]): void {
 export function showMode2(filePath: string, review: IFileReview, remaining: string[]): void {
 	reviewNextItem.hide();
 
-	// Hunk navigation
 	const hunkCount = review.hunkRanges.length;
 	let hunkIdx = state.getCurrentHunkIndex();
 	if (hunkIdx >= hunkCount) hunkIdx = Math.max(0, hunkCount - 1);
@@ -145,18 +143,19 @@ export function showMode2(filePath: string, review: IFileReview, remaining: stri
 
 	hunkCounterItem.text = hunkCount > 0 ? `${hunkIdx + 1}/${hunkCount} changes` : "0 changes";
 
-	// File info
-	const relName = path.relative(_workspacePath, filePath);
+	const isExternal = filePath.startsWith("..") || !filePath.startsWith(_workspacePath);
+	const relName = isExternal
+		? `$(link-external) ${filePath}`
+		: path.relative(_workspacePath, filePath);
 	const fileIdx = remaining.indexOf(filePath);
 	fileCounterItem.text = `$(file) ${relName} (${fileIdx + 1}/${remaining.length})`;
 
-	// Show all Mode 2 items
 	hunkPrevItem.show();
 	hunkCounterItem.show();
 	hunkNextItem.show();
 	sep1Item.show();
-	keepFileItem.show();
 	undoFileItem.show();
+	keepFileItem.show();
 	sep2Item.show();
 	filePrevItem.show();
 	fileCounterItem.show();

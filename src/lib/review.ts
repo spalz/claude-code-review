@@ -2,20 +2,32 @@
 import * as fs from "fs";
 import * as path from "path";
 import { execSync } from "child_process";
-import type { Hunk, HunkRange, MergedResult, IFileReview } from "../types";
+import type { ChangeType, Hunk, HunkRange, MergedResult, IFileReview } from "../types";
 import { computeDiff } from "./diff";
 import * as state from "./state";
 
 export class FileReview implements IFileReview {
 	mergedLines: string[] = [];
 	hunkRanges: HunkRange[] = [];
+	changeType: ChangeType;
 
 	constructor(
 		public readonly filePath: string,
 		public readonly originalContent: string,
 		public readonly modifiedContent: string,
 		public hunks: Hunk[],
-	) {}
+		changeType?: ChangeType,
+	) {
+		if (changeType) {
+			this.changeType = changeType;
+		} else if (!originalContent) {
+			this.changeType = "create";
+		} else if (!modifiedContent) {
+			this.changeType = "delete";
+		} else {
+			this.changeType = "edit";
+		}
+	}
 
 	get unresolvedCount(): number {
 		return this.hunks.filter((h) => !h.resolved).length;

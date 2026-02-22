@@ -1,3 +1,5 @@
+export type ChangeType = "edit" | "create" | "delete";
+
 export interface Hunk {
 	id: number;
 	origStart: number;
@@ -27,9 +29,35 @@ export interface IFileReview {
 	filePath: string;
 	originalContent: string;
 	modifiedContent: string;
+	changeType: ChangeType;
 	hunks: Hunk[];
 	mergedLines: string[];
 	hunkRanges: HunkRange[];
 	readonly unresolvedCount: number;
 	readonly isFullyResolved: boolean;
+}
+
+export interface PersistedReviewState {
+	version: 1;
+	timestamp: number;
+	files: PersistedFileReview[];
+	currentFileIndex: number;
+}
+
+export interface PersistedFileReview {
+	filePath: string;
+	originalContent: string;
+	modifiedContent: string;
+	hunks: Hunk[];
+	changeType: ChangeType;
+}
+
+export interface ReviewSnapshot {
+	filePath: string;
+	originalContent: string;
+	modifiedContent: string;
+	changeType: ChangeType;
+	hunks: Hunk[];
+	mergedLines: string[];
+	hunkRanges: HunkRange[];
 }

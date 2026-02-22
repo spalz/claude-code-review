@@ -97,36 +97,49 @@ export function parseUnifiedDiff(diffText: string): Hunk[] {
 			continue;
 		}
 
-		const origStart = parseInt(m[1]);
-		const modStart = parseInt(m[3]);
+		let origPos = parseInt(m[1]);
+		let modPos = parseInt(m[3]);
 		i++;
 
 		let removed: string[] = [];
 		let added: string[] = [];
+		let subOrigStart = origPos;
+		let subModStart = modPos;
 		let hadContext = false;
 
 		while (i < lines.length && !lines[i].startsWith("@@")) {
 			const line = lines[i];
-			if (line.startsWith("-")) {
+			if (line.startsWith("-") || line.startsWith("+")) {
+				// Flush accumulated sub-hunk when context separated changes
 				if (hadContext && (removed.length || added.length)) {
-					hunks.push(makeHunk(hunkId++, origStart, modStart, removed, added));
+					hunks.push(makeHunk(hunkId++, subOrigStart, subModStart, removed, added));
 					removed = [];
 					added = [];
 					hadContext = false;
 				}
-				removed.push(line.slice(1));
-				hadContext = false;
-			} else if (line.startsWith("+")) {
-				added.push(line.slice(1));
+				// Mark start position for new sub-hunk
+				if (removed.length === 0 && added.length === 0) {
+					subOrigStart = origPos;
+					subModStart = modPos;
+				}
+				if (line.startsWith("-")) {
+					removed.push(line.slice(1));
+					origPos++;
+				} else {
+					added.push(line.slice(1));
+					modPos++;
+				}
 				hadContext = false;
 			} else if (line.startsWith(" ") || line === "") {
 				if (removed.length || added.length) hadContext = true;
+				origPos++;
+				modPos++;
 			}
 			i++;
 		}
 
 		if (removed.length || added.length) {
-			hunks.push(makeHunk(hunkId++, origStart, modStart, removed, added));
+			hunks.push(makeHunk(hunkId++, subOrigStart, subModStart, removed, added));
 		}
 	}
 

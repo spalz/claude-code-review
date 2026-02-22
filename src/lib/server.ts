@@ -1,16 +1,34 @@
 // HTTP server for Claude Code hooks integration
 import * as http from "http";
+import * as fs from "fs";
 import { execSync } from "child_process";
 import * as vscode from "vscode";
 import * as state from "./state";
 import * as log from "./log";
+import { parseBashCommand } from "./bash-file-parser";
 
 const PORT = 27182;
 let server: http.Server | null = null;
 let _addFileToReview: ((filePath: string) => void) | null = null;
+let _workspacePath: string | undefined;
+
+// Before-content snapshots from PreToolUse hook
+const beforeSnapshots = new Map<string, string>();
 
 export function setAddFileHandler(fn: (filePath: string) => void): void {
 	_addFileToReview = fn;
+}
+
+export function setWorkspacePath(wp: string): void {
+	_workspacePath = wp;
+}
+
+export function getSnapshot(filePath: string): string | undefined {
+	return beforeSnapshots.get(filePath);
+}
+
+export function clearSnapshot(filePath: string): void {
+	beforeSnapshots.delete(filePath);
 }
 
 function createServer(): http.Server {
@@ -40,13 +58,50 @@ function createServer(): http.Server {
 			return;
 		}
 
-		// New endpoint: hook sends {file, tool} after Edit/Write
+		// PreToolUse snapshot — captures file content before Claude modifies it
+		if (req.method === "POST" && req.url === "/snapshot") {
+			readBody(req, (body) => {
+				try {
+					const data = JSON.parse(body) as { file?: string; content?: string; tool?: string; command?: string };
+					if (data.tool === "Bash" && data.command) {
+						const changes = parseBashCommand(data.command, _workspacePath);
+						const allFiles = [...changes.deleted, ...changes.modified];
+						for (const file of allFiles) {
+							try {
+								const content = fs.readFileSync(file, "utf8");
+								beforeSnapshots.set(file, content);
+								log.log(`/snapshot: stored ${content.length} chars for ${file} (Bash)`);
+							} catch {
+								// File may not exist yet (e.g. touch new file)
+							}
+						}
+					} else if (data.file) {
+						const content = data.content
+							? Buffer.from(data.content, "base64").toString("utf8")
+							: "";
+						beforeSnapshots.set(data.file, content);
+						log.log(`/snapshot: stored ${content.length} chars for ${data.file}`);
+					}
+				} catch (err) {
+					log.log(`/snapshot error: ${(err as Error).message}`);
+				}
+				json(res, { ok: true });
+			});
+			return;
+		}
+
+		// PostToolUse — hook sends {file, tool} after Edit/Write, or {tool, command} for Bash
 		if (req.method === "POST" && req.url === "/changed") {
 			readBody(req, (body) => {
 				try {
-					const data = JSON.parse(body) as { file?: string; tool?: string };
+					const data = JSON.parse(body) as { file?: string; tool?: string; command?: string };
 					log.log(`/changed: tool=${data.tool}, file=${data.file}`);
-					if (data.file && _addFileToReview) {
+					if (data.tool === "Bash" && data.command) {
+						const changes = parseBashCommand(data.command, _workspacePath);
+						for (const file of [...changes.modified, ...changes.deleted]) {
+							if (_addFileToReview) _addFileToReview(file);
+						}
+					} else if (data.file && _addFileToReview) {
 						_addFileToReview(data.file);
 					}
 				} catch (err) {
@@ -57,7 +112,7 @@ function createServer(): http.Server {
 			return;
 		}
 
-		// Legacy endpoint (kept for backward compat)
+		// Legacy endpoint
 		if (req.method === "POST" && req.url === "/review") {
 			readBody(req, () => {
 				vscode.commands.executeCommand("ccr.openReview");
@@ -71,9 +126,6 @@ function createServer(): http.Server {
 	});
 }
 
-/**
- * Kill any process listening on our port (stale server from previous reload).
- */
 function killOldServer(): void {
 	try {
 		const output = execSync(`lsof -ti tcp:${PORT} 2>/dev/null`, {
@@ -95,15 +147,11 @@ function killOldServer(): void {
 				}
 			}
 		}
-	} catch {
-		// lsof not found or no process — fine
-	}
+	} catch {}
 }
 
 export function startServer(): void {
-	// First, kill any stale server holding the port
 	killOldServer();
-
 	server = createServer();
 
 	let retries = 0;
@@ -119,7 +167,6 @@ export function startServer(): void {
 		if (err.code === "EADDRINUSE") {
 			retries++;
 			if (retries === 1) {
-				// Port still held after SIGTERM — force kill
 				log.log(`port ${PORT} still busy after SIGTERM, sending SIGKILL`);
 				try {
 					const output = execSync(`lsof -ti tcp:${PORT} 2>/dev/null`, {
@@ -146,7 +193,6 @@ export function startServer(): void {
 		}
 	});
 
-	// Small delay to let SIGTERM take effect
 	setTimeout(tryListen, 300);
 }
 

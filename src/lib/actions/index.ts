@@ -1,9 +1,19 @@
-export { resolveHunk, resolveAllHunks, openFileForReview } from "./review-actions";
+export {
+	resolveHunk,
+	resolveAllHunks,
+	openFileForReview,
+	setReviewManager as setReviewActionsManager,
+} from "./review-actions";
 export {
 	navigateFile,
 	navigateHunk,
 	keepCurrentFile,
 	undoCurrentFile,
 	reviewNextUnresolved,
+	setReviewManager as setNavigationManager,
 } from "./navigation";
-export { addFileToReview, startReviewSession } from "./file-review";
+export {
+	addFileToReview,
+	startReviewSession,
+	setReviewManager as setFileReviewManager,
+} from "./file-review";

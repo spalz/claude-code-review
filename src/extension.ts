@@ -1,17 +1,21 @@
 // Claude Code with Review v8.0 — hook-based review + activitybar + Claude CLI sessions
 import * as vscode from "vscode";
-import * as fs from "fs";
 import * as state from "./lib/state";
 import { ReviewCodeLensProvider } from "./lib/codelens";
 import { MainViewProvider } from "./lib/main-view";
 import { PtyManager } from "./lib/pty-manager";
 import { applyDecorations } from "./lib/decorations";
-import { startServer, stopServer, setAddFileHandler } from "./lib/server";
+import { startServer, stopServer, setAddFileHandler, setWorkspacePath } from "./lib/server";
 import { checkAndPrompt, doInstall } from "./lib/hook-manager";
 import { createReviewStatusBar, updateReviewStatusBar } from "./lib/status-bar";
+import { ReviewManager } from "./lib/review-manager";
+import { registerDocumentListener } from "./lib/document-listener";
+import { clearAllHistories } from "./lib/undo-history";
 import * as actions from "./lib/actions";
 import * as log from "./lib/log";
 import type { HookStatus } from "./types";
+
+let reviewManager: ReviewManager | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
 	log.init();
@@ -24,6 +28,14 @@ export function activate(context: vscode.ExtensionContext): void {
 	}
 
 	try {
+		// --- ReviewManager ---
+		reviewManager = new ReviewManager(workspacePath);
+
+		// Wire ReviewManager into action modules
+		actions.setReviewActionsManager(reviewManager);
+		actions.setNavigationManager(reviewManager);
+		actions.setFileReviewManager(reviewManager);
+
 		// --- PTY manager ---
 		const ptyManager = new PtyManager(workspacePath);
 		log.log("PtyManager created");
@@ -39,6 +51,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
 		state.setCodeLensProvider(codeLens);
 		state.setMainView(mainView);
+		reviewManager.setProviders(codeLens, mainView);
 
 		// Wire pty output to webview
 		ptyManager.setHandlers(
@@ -71,6 +84,11 @@ export function activate(context: vscode.ExtensionContext): void {
 			updateReviewStatusBar();
 		});
 
+		// --- setContext for keybindings ---
+		reviewManager.onReviewStateChange((hasActive) => {
+			vscode.commands.executeCommand("setContext", "ccr.reviewActive", hasActive);
+		});
+
 		// --- Main status bar button ---
 		const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
 		statusBar.text = "$(layers) Claude Code Review";
@@ -89,8 +107,25 @@ export function activate(context: vscode.ExtensionContext): void {
 				(item: { filePath?: string } | undefined) =>
 					item?.filePath && actions.openFileForReview(item.filePath),
 			],
-			["ccr.acceptHunk", (fp: string, id: number) => actions.resolveHunk(fp, id, true)],
-			["ccr.rejectHunk", (fp: string, id: number) => actions.resolveHunk(fp, id, false)],
+			[
+				"ccr.acceptHunk",
+				(fp?: string, id?: number) => {
+					if (typeof fp === "string" && typeof id === "number") {
+						return actions.resolveHunk(fp, id, true);
+					}
+					// Keyboard shortcut — resolve current hunk
+					return resolveCurrentHunk(true);
+				},
+			],
+			[
+				"ccr.rejectHunk",
+				(fp?: string, id?: number) => {
+					if (typeof fp === "string" && typeof id === "number") {
+						return actions.resolveHunk(fp, id, false);
+					}
+					return resolveCurrentHunk(false);
+				},
+			],
 			[
 				"ccr.acceptFile",
 				(item: { filePath?: string } | undefined) =>
@@ -174,8 +209,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
 		// --- HTTP server + hook bridge ---
 		setAddFileHandler((filePath) => {
-			actions.addFileToReview(workspacePath, filePath);
+			reviewManager!.addFile(filePath);
 		});
+		setWorkspacePath(workspacePath);
 		startServer();
 		context.subscriptions.push({
 			dispose: () => {
@@ -184,20 +220,39 @@ export function activate(context: vscode.ExtensionContext): void {
 			},
 		});
 
-		// --- Hook manager: check & prompt for PostToolUse hook ---
+		// --- Document listener for undo/redo ---
+		context.subscriptions.push(
+			registerDocumentListener(context, (fsPath, snapshot) => {
+				reviewManager!.restoreFromSnapshot(fsPath, snapshot);
+			}),
+		);
+
+		// --- Restore persisted review state ---
+		reviewManager.restore().then(async (restored) => {
+			if (restored) {
+				log.log("Review state restored from persistence");
+				vscode.commands.executeCommand("setContext", "ccr.reviewActive", true);
+				await reviewManager!.reviewNextUnresolved();
+				state.refreshAll();
+			}
+		});
+
+		// --- Hook manager: check & prompt for hooks ---
 		const hookStatusHandler = (hookStatus: HookStatus) => {
 			mainView.sendHookStatus(hookStatus);
 		};
 		checkAndPrompt(workspacePath, hookStatusHandler);
 
-		// Command to install hook from webview
 		context.subscriptions.push(
 			vscode.commands.registerCommand("ccr.installHook", () =>
 				doInstall(workspacePath, hookStatusHandler),
 			),
 		);
 
-		// --- First-run tip: drag to secondary sidebar ---
+		// Register ReviewManager for disposal
+		context.subscriptions.push(reviewManager);
+
+		// --- First-run tip ---
 		const SHOWN_KEY = "ccr.sidebarTipShown";
 		if (!context.globalState.get(SHOWN_KEY)) {
 			context.globalState.update(SHOWN_KEY, true);
@@ -216,11 +271,50 @@ export function activate(context: vscode.ExtensionContext): void {
 	}
 }
 
-export function deactivate(): void {
-	for (const [fp, review] of state.activeReviews) {
-		try {
-			fs.writeFileSync(fp, review.modifiedContent, "utf8");
-		} catch {}
+/**
+ * Resolve the hunk nearest to the cursor position.
+ */
+async function resolveCurrentHunk(accept: boolean): Promise<void> {
+	const editor = vscode.window.activeTextEditor;
+	if (!editor || !reviewManager) return;
+
+	const filePath = editor.document.uri.fsPath;
+	const review = state.activeReviews.get(filePath);
+	if (!review) return;
+
+	const cursorLine = editor.selection.active.line;
+
+	// Find the closest unresolved hunk to cursor
+	let bestHunkId: number | null = null;
+	let bestDist = Infinity;
+
+	for (const range of review.hunkRanges) {
+		const hunk = review.hunks.find((h) => h.id === range.hunkId);
+		if (!hunk || hunk.resolved) continue;
+
+		const start = range.removedStart < range.removedEnd ? range.removedStart : range.addedStart;
+		const end = range.addedEnd > 0 ? range.addedEnd : range.removedEnd;
+
+		let dist: number;
+		if (cursorLine >= start && cursorLine < end) {
+			dist = 0; // cursor is inside this hunk
+		} else {
+			dist = Math.min(Math.abs(cursorLine - start), Math.abs(cursorLine - end));
+		}
+
+		if (dist < bestDist) {
+			bestDist = dist;
+			bestHunkId = hunk.id;
+		}
 	}
+
+	if (bestHunkId !== null) {
+		await reviewManager.resolveHunk(filePath, bestHunkId, accept);
+	}
+}
+
+export function deactivate(): void {
+	// dispose() handles save + file restoration via context.subscriptions
+	clearAllHistories();
 	stopServer();
 }

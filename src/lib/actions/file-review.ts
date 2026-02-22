@@ -1,78 +1,20 @@
+// File review actions — delegates to ReviewManager
 import * as vscode from "vscode";
-import * as fs from "fs";
-import * as path from "path";
 import { execSync } from "child_process";
+import * as path from "path";
 import * as state from "../state";
-import { createReview, enterReviewMode } from "../review";
+import { enterReviewMode } from "../review";
 import { log } from "../log";
-import { openFileForReview } from "./review-actions";
+import type { ReviewManager } from "../review-manager";
 
-export function addFileToReview(workspacePath: string, absFilePath: string): void {
-	log(`addFileToReview: ${absFilePath}`);
+let _manager: ReviewManager | null = null;
 
-	if (state.activeReviews.has(absFilePath)) {
-		log(`addFileToReview: updating existing review for ${absFilePath}`);
-		const existing = state.activeReviews.get(absFilePath)!;
-		let modifiedContent: string;
-		try {
-			modifiedContent = fs.readFileSync(absFilePath, "utf8");
-		} catch {
-			return;
-		}
-		if (existing.originalContent === modifiedContent) {
-			state.activeReviews.delete(absFilePath);
-			const files = state.getReviewFiles().filter((f) => f !== absFilePath);
-			state.setReviewFiles(files);
-			state.refreshAll();
-			return;
-		}
-		state.activeReviews.delete(absFilePath);
-		createReview(absFilePath, existing.originalContent, modifiedContent, workspacePath);
-		state.refreshAll();
-		return;
-	}
+export function setReviewManager(manager: ReviewManager): void {
+	_manager = manager;
+}
 
-	let original = "";
-	try {
-		const relPath = path.relative(workspacePath, absFilePath);
-		if (!relPath.startsWith("..")) {
-			original = execSync(`git show HEAD:"${relPath}"`, {
-				cwd: workspacePath,
-				encoding: "utf8",
-				timeout: 5000,
-				stdio: "pipe",
-			});
-		}
-	} catch {
-		original = "";
-	}
-
-	let modified: string;
-	try {
-		modified = fs.readFileSync(absFilePath, "utf8");
-	} catch {
-		log(`addFileToReview: cannot read ${absFilePath}`);
-		return;
-	}
-
-	if (original === modified) {
-		log(`addFileToReview: no changes in ${absFilePath}`);
-		return;
-	}
-
-	const review = createReview(absFilePath, original, modified, workspacePath);
-	if (!review) {
-		log(`addFileToReview: no reviewable hunks in ${absFilePath}`);
-		return;
-	}
-
-	const files = state.getReviewFiles();
-	if (!files.includes(absFilePath)) {
-		files.push(absFilePath);
-		state.setReviewFiles(files);
-	}
-	log(`addFileToReview: added ${absFilePath}, ${review.hunks.length} hunks`);
-	state.refreshAll();
+export function addFileToReview(_workspacePath: string, absFilePath: string): void {
+	_manager?.addFile(absFilePath);
 }
 
 export async function startReviewSession(workspacePath: string): Promise<void> {
@@ -127,7 +69,7 @@ export async function startReviewSession(workspacePath: string): Promise<void> {
 		try {
 			await enterReviewMode(fp, workspacePath);
 		} catch (e) {
-			console.error(`[ccr] skip ${fp}:`, (e as Error).message);
+			log(`[ccr] skip ${fp}: ${(e as Error).message}`);
 		}
 	}
 
@@ -139,5 +81,5 @@ export async function startReviewSession(workspacePath: string): Promise<void> {
 
 	state.setReviewFiles(reviewable);
 	state.refreshAll();
-	await openFileForReview(reviewable[0]);
+	await _manager?.openFileForReview(reviewable[0]);
 }

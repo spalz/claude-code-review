@@ -12,7 +12,8 @@
 		"resolveJsonModule": true,
 		"sourceMap": true,
 		"moduleResolution": "node",
-		"isolatedModules": true
+		"isolatedModules": true,
+		"types": ["node", "vitest/globals"]
 	},
 	"include": ["src/**/*.ts"],
 	"exclude": ["node_modules", "dist", "media"]

@@ -25,7 +25,10 @@
 		"format:check": "prettier --check \"src/**/*.ts\" \"media/webview/**/*.{js,css}\" \"*.{json,md,mjs}\"",
 		"deploy": "node scripts/deploy.js",
 		"dev": "node esbuild.js --watch --deploy",
-		"vscode:prepublish": "npm run build:prod"
+		"vscode:prepublish": "npm run build:prod",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"test:coverage": "vitest run --coverage"
 	},
 	"contributes": {
 		"commands": [
@@ -159,6 +162,26 @@
 				"key": "alt+k",
 				"mac": "alt+k",
 				"when": "editorTextFocus"
+			},
+			{
+				"command": "ccr.acceptHunk",
+				"key": "cmd+y",
+				"when": "ccr.reviewActive && editorFocus"
+			},
+			{
+				"command": "ccr.rejectHunk",
+				"key": "cmd+n",
+				"when": "ccr.reviewActive && editorFocus"
+			},
+			{
+				"command": "ccr.nextHunk",
+				"key": "cmd+]",
+				"when": "ccr.reviewActive"
+			},
+			{
+				"command": "ccr.prevHunk",
+				"key": "cmd+[",
+				"when": "ccr.reviewActive"
 			}
 		],
 		"configuration": {
@@ -186,11 +209,13 @@
 		"@types/vscode": "^1.109.0",
 		"@typescript-eslint/eslint-plugin": "^8.56.0",
 		"@typescript-eslint/parser": "^8.56.0",
+		"@vitest/coverage-v8": "^4.0.18",
 		"esbuild": "^0.27.3",
 		"eslint": "^10.0.1",
 		"eslint-config-prettier": "^10.1.8",
 		"eslint-plugin-prettier": "^5.5.5",
 		"prettier": "^3.8.1",
-		"typescript": "^5.9.3"
+		"typescript": "^5.9.3",
+		"vitest": "^4.0.18"
 	}
 }
