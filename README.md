@@ -41,10 +41,10 @@ cp -r /path/to/claude-code-review/* ~/.vscode/extensions/local.claude-code-revie
 
 ### Горячие клавиши
 
-| Комбинация | Действие |
-|---|---|
-| `Ctrl+Alt+B` | Показать/скрыть панель |
-| `Alt+K` | Отправить выделение в сессию Claude |
+| Комбинация   | Действие                            |
+| ------------ | ----------------------------------- |
+| `Ctrl+Alt+B` | Показать/скрыть панель              |
+| `Alt+K`      | Отправить выделение в сессию Claude |
 
 ### Команды
 
@@ -110,9 +110,9 @@ State (activeReviews Map)
 
 ## Настройки
 
-| Параметр | По умолчанию | Описание |
-|---|---|---|
-| `claudeCodeReview.cliCommand` | `claude` | CLI команда для сессий (`claude` или `happy`) |
+| Параметр                      | По умолчанию | Описание                                      |
+| ----------------------------- | ------------ | --------------------------------------------- |
+| `claudeCodeReview.cliCommand` | `claude`     | CLI команда для сессий (`claude` или `happy`) |
 
 ## Разработка
 
@@ -120,10 +120,10 @@ State (activeReviews Map)
 
 1. Отредактируйте файлы в репозитории
 2. Скопируйте в папку расширений:
-   ```bash
-   cp -r ./* ~/.cursor/extensions/local.claude-code-review-8.0.0/
-   cp -r ./* ~/.vscode/extensions/local.claude-code-review-8.0.0/
-   ```
+    ```bash
+    cp -r ./* ~/.cursor/extensions/local.claude-code-review-8.0.0/
+    cp -r ./* ~/.vscode/extensions/local.claude-code-review-8.0.0/
+    ```
 3. Перезапустите редактор (`Developer: Reload Window`)
 
 Сборка не требуется — все изменения применяются сразу после копирования и перезагрузки.
