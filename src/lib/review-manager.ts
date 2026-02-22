@@ -126,7 +126,7 @@ export class ReviewManager implements vscode.Disposable {
 		this.applyContentViaEdit(filePath, review.mergedLines.join("\n"));
 	}
 
-	private async applyContentViaEdit(filePath: string, newContent: string): Promise<void> {
+	private async applyContentViaEdit(filePath: string, newContent: string, revealLine?: number): Promise<void> {
 		const editor = vscode.window.visibleTextEditors.find(
 			(e) => e.document.uri.fsPath === filePath,
 		);
@@ -136,6 +136,10 @@ export class ReviewManager implements vscode.Disposable {
 			return;
 		}
 		log.log(`ReviewManager.applyContentViaEdit: applying via TextEditor.edit for ${filePath} (${newContent.length} chars)`);
+
+		// Save scroll position and cursor before replacing content
+		const savedSelection = editor.selection;
+		const savedVisibleRange = editor.visibleRanges[0];
 
 		setApplyingEdit(filePath, true);
 		try {
@@ -156,6 +160,28 @@ export class ReviewManager implements vscode.Disposable {
 
 		const review = state.activeReviews.get(filePath);
 		if (review) applyDecorations(editor, review);
+
+		// Restore scroll position: prefer explicit revealLine, otherwise restore previous viewport
+		if (revealLine !== undefined) {
+			const clampedLine = Math.min(revealLine, editor.document.lineCount - 1);
+			editor.revealRange(
+				new vscode.Range(clampedLine, 0, clampedLine, 0),
+				vscode.TextEditorRevealType.InCenterIfOutsideViewport,
+			);
+		} else if (savedVisibleRange) {
+			// Clamp to new document length
+			const topLine = Math.min(savedVisibleRange.start.line, editor.document.lineCount - 1);
+			editor.revealRange(
+				new vscode.Range(topLine, 0, topLine, 0),
+				vscode.TextEditorRevealType.AtTop,
+			);
+		}
+
+		// Restore cursor position (clamped to new document)
+		const maxLine = editor.document.lineCount - 1;
+		const cursorLine = Math.min(savedSelection.active.line, maxLine);
+		editor.selection = new vscode.Selection(cursorLine, savedSelection.active.character, cursorLine, savedSelection.active.character);
+
 		this.syncState();
 		this.refreshUI();
 	}

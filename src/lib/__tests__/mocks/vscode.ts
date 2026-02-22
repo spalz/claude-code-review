@@ -26,7 +26,10 @@ export class Range {
 	}
 }
 
-export class Selection extends Range {}
+export class Selection extends Range {
+	get active() { return this.end; }
+	get anchor() { return this.start; }
+}
 
 export class Uri {
 	constructor(public fsPath: string) {}

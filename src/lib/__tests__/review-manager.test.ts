@@ -680,7 +680,8 @@ describe("undoResolve / redoResolve", () => {
 			},
 			edit: vi.fn().mockResolvedValue(true),
 			revealRange: vi.fn(),
-			selection: null,
+			selection: { active: { line: 0, character: 0 }, anchor: { line: 0, character: 0 } },
+			visibleRanges: [{ start: { line: 0 }, end: { line: 20 } }],
 		};
 		(vscode.window as any).activeTextEditor = mockEditor;
 		(vscode.window as any).visibleTextEditors = [mockEditor];
