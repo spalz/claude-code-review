@@ -50,6 +50,7 @@ vi.mock("../persistence", () => mockPersistence);
 import * as vscode from "vscode";
 import * as state from "../state";
 import { ReviewManager } from "../review-manager";
+import { applyDecorations } from "../decorations";
 import type { ReviewSnapshot } from "../../types";
 
 function setupManager(): ReviewManager {
@@ -680,7 +681,6 @@ describe("undoResolve / redoResolve", () => {
 			},
 			edit: vi.fn().mockResolvedValue(true),
 			revealRange: vi.fn(),
-			selection: null,
 			selection: { active: { line: 0, character: 0 }, anchor: { line: 0, character: 0 } },
 			visibleRanges: [{ start: { line: 0 }, end: { line: 20 } }],
 		};
@@ -938,5 +938,267 @@ describe("undoResolve / redoResolve", () => {
 
 		// File should be finalized again
 		expect(state.activeReviews.has("/ws/file.ts")).toBe(false);
+	});
+});
+
+// --- Helper to set up mock editor for openFileForReview tests ---
+
+function mockOpenTextDocument(content: string) {
+	const mockDoc = {
+		uri: { fsPath: "" },
+		getText: vi.fn().mockReturnValue(content),
+		lineCount: content.split("\n").length,
+		lineAt: (n: number) => ({ text: content.split("\n")[n] ?? "" }),
+		save: vi.fn().mockResolvedValue(true),
+	};
+	(vscode.workspace.openTextDocument as ReturnType<typeof vi.fn>).mockResolvedValue(mockDoc);
+	return mockDoc;
+}
+
+function mockShowTextDocument(doc: any) {
+	const mockEditor = {
+		document: doc,
+		edit: vi.fn().mockResolvedValue(true),
+		revealRange: vi.fn(),
+		selection: { active: { line: 0, character: 0 } },
+		setDecorations: vi.fn(),
+	};
+	(vscode.window.showTextDocument as ReturnType<typeof vi.fn>).mockResolvedValue(mockEditor);
+	return mockEditor;
+}
+
+function addMultipleFiles(mgr: ReviewManager, count: number): string[] {
+	const paths: string[] = [];
+	for (let i = 0; i < count; i++) {
+		const p = `/ws/file${i}.ts`;
+		paths.push(p);
+		mockFs.readFileSync.mockReturnValue(`modified${i}`);
+		mockExecSync.mockImplementation((cmd: string) => {
+			if (cmd.includes("git ls-files")) return "";
+			if (cmd.includes("git diff HEAD")) return `@@ -1,1 +1,1 @@\n-orig${i}\n+modified${i}`;
+			if (cmd.includes("git show HEAD")) return `orig${i}`;
+			return "";
+		});
+		mgr.addFile(p);
+	}
+	return paths;
+}
+
+describe("openFileForReview — stale content sync", () => {
+	it("syncs editor content when doc.getText() differs from mergedContent", async () => {
+		const mgr = setupManager();
+		mgr.addFile("/ws/file.ts");
+		const review = state.activeReviews.get("/ws/file.ts")!;
+		const mergedContent = review.mergedLines.join("\n");
+
+		// Editor has stale (modified) content, not merged
+		const mockDoc = mockOpenTextDocument("stale content that differs");
+		mockDoc.uri.fsPath = "/ws/file.ts";
+		const mockEditor = mockShowTextDocument(mockDoc);
+
+		await mgr.openFileForReview("/ws/file.ts");
+
+		// editor.edit() should be called to sync content
+		expect(mockEditor.edit).toHaveBeenCalledTimes(1);
+		expect(mockDoc.save).toHaveBeenCalled();
+	});
+
+	it("skips sync when doc.getText() matches mergedContent", async () => {
+		const mgr = setupManager();
+		mgr.addFile("/ws/file.ts");
+		const review = state.activeReviews.get("/ws/file.ts")!;
+		const mergedContent = review.mergedLines.join("\n");
+
+		// Editor already has the correct merged content
+		const mockDoc = mockOpenTextDocument(mergedContent);
+		mockDoc.uri.fsPath = "/ws/file.ts";
+		const mockEditor = mockShowTextDocument(mockDoc);
+
+		await mgr.openFileForReview("/ws/file.ts");
+
+		// editor.edit() should NOT be called
+		expect(mockEditor.edit).not.toHaveBeenCalled();
+	});
+
+	it("applies decorations after sync", async () => {
+		const mgr = setupManager();
+		mgr.addFile("/ws/file.ts");
+		const review = state.activeReviews.get("/ws/file.ts")!;
+
+		const mockDoc = mockOpenTextDocument("stale content");
+		mockDoc.uri.fsPath = "/ws/file.ts";
+		const mockEditor = mockShowTextDocument(mockDoc);
+		(applyDecorations as ReturnType<typeof vi.fn>).mockClear();
+
+		await mgr.openFileForReview("/ws/file.ts");
+
+		expect(applyDecorations).toHaveBeenCalledWith(mockEditor, review);
+	});
+
+	it("sets currentFileIndex and currentHunkIndex", async () => {
+		const mgr = setupManager();
+		const paths = addMultipleFiles(mgr, 3);
+
+		const mergedContent = state.activeReviews.get(paths[1])!.mergedLines.join("\n");
+		const mockDoc = mockOpenTextDocument(mergedContent);
+		mockDoc.uri.fsPath = paths[1];
+		mockShowTextDocument(mockDoc);
+
+		await mgr.openFileForReview(paths[1]);
+
+		expect(mgr.getCurrentFileIndex()).toBe(1);
+		expect(mgr.getCurrentHunkIndex()).toBe(0);
+	});
+
+	it("does nothing for non-existent review", async () => {
+		const mgr = setupManager();
+		await mgr.openFileForReview("/ws/nope.ts");
+		expect(vscode.workspace.openTextDocument).not.toHaveBeenCalled();
+	});
+});
+
+describe("openCurrentOrNext", () => {
+	function setupOpenMock(mgr: ReviewManager) {
+		// Spy on openFileForReview by tracking which file gets opened
+		const openedFiles: string[] = [];
+		const origOpen = mgr.openFileForReview.bind(mgr);
+		vi.spyOn(mgr, "openFileForReview").mockImplementation(async (fp) => {
+			openedFiles.push(fp);
+		});
+		return openedFiles;
+	}
+
+	it("opens file at saved currentFileIndex", async () => {
+		const mgr = setupManager();
+		const paths = addMultipleFiles(mgr, 3);
+		// Simulate restore having set currentFileIndex to 2
+		// Use internal method to set index (restore does this)
+		mockPersistence.loadReviewState.mockReturnValue({
+			version: 1,
+			timestamp: 1,
+			currentFileIndex: 2,
+			files: [
+				{ filePath: paths[0], originalContent: "orig0", modifiedContent: "modified0", hunks: [{ id: 0, origStart: 1, origCount: 1, modStart: 1, modCount: 1, removed: ["orig0"], added: ["modified0"], resolved: false, accepted: false }], changeType: "edit" },
+				{ filePath: paths[1], originalContent: "orig1", modifiedContent: "modified1", hunks: [{ id: 0, origStart: 1, origCount: 1, modStart: 1, modCount: 1, removed: ["orig1"], added: ["modified1"], resolved: false, accepted: false }], changeType: "edit" },
+				{ filePath: paths[2], originalContent: "orig2", modifiedContent: "modified2", hunks: [{ id: 0, origStart: 1, origCount: 1, modStart: 1, modCount: 1, removed: ["orig2"], added: ["modified2"], resolved: false, accepted: false }], changeType: "edit" },
+			],
+		});
+		// Clear and restore to get proper state
+		state.activeReviews.clear();
+		const mgr2 = setupManager();
+		await mgr2.restore();
+
+		const openedFiles = setupOpenMock(mgr2);
+		await mgr2.openCurrentOrNext();
+
+		expect(openedFiles).toEqual([paths[2]]);
+	});
+
+	it("falls back to first unresolved when currentFileIndex is out of bounds", async () => {
+		const mgr = setupManager();
+		addMultipleFiles(mgr, 2);
+
+		// Force currentFileIndex beyond array bounds
+		mockPersistence.loadReviewState.mockReturnValue({
+			version: 1,
+			timestamp: 1,
+			currentFileIndex: 99,
+			files: [
+				{ filePath: "/ws/file0.ts", originalContent: "orig0", modifiedContent: "modified0", hunks: [{ id: 0, origStart: 1, origCount: 1, modStart: 1, modCount: 1, removed: ["orig0"], added: ["modified0"], resolved: false, accepted: false }], changeType: "edit" },
+			],
+		});
+		state.activeReviews.clear();
+		const mgr2 = setupManager();
+		await mgr2.restore();
+
+		const openedFiles = setupOpenMock(mgr2);
+		await mgr2.openCurrentOrNext();
+
+		expect(openedFiles).toEqual(["/ws/file0.ts"]);
+	});
+
+	it("does nothing when no unresolved files", async () => {
+		const mgr = setupManager();
+		const openedFiles = setupOpenMock(mgr);
+
+		await mgr.openCurrentOrNext();
+
+		expect(openedFiles).toHaveLength(0);
+	});
+});
+
+describe("reviewNextUnresolved — skip current file", () => {
+	function setupOpenMock(mgr: ReviewManager) {
+		const openedFiles: string[] = [];
+		vi.spyOn(mgr, "openFileForReview").mockImplementation(async (fp) => {
+			openedFiles.push(fp);
+		});
+		return openedFiles;
+	}
+
+	it("skips current file and opens next unresolved", async () => {
+		const mgr = setupManager();
+		const paths = addMultipleFiles(mgr, 3);
+
+		// Simulate being on file0 (index 0)
+		const mergedContent = state.activeReviews.get(paths[0])!.mergedLines.join("\n");
+		const mockDoc = mockOpenTextDocument(mergedContent);
+		mockDoc.uri.fsPath = paths[0];
+		mockShowTextDocument(mockDoc);
+		await mgr.openFileForReview(paths[0]);
+
+		// Now spy on subsequent calls
+		const openedFiles = setupOpenMock(mgr);
+		await mgr.reviewNextUnresolved();
+
+		// Should open file1, NOT file0 (current)
+		expect(openedFiles).toEqual([paths[1]]);
+	});
+
+	it("opens current file as fallback when it is the only unresolved", async () => {
+		const mgr = setupManager();
+		const paths = addMultipleFiles(mgr, 1);
+
+		const mergedContent = state.activeReviews.get(paths[0])!.mergedLines.join("\n");
+		const mockDoc = mockOpenTextDocument(mergedContent);
+		mockDoc.uri.fsPath = paths[0];
+		mockShowTextDocument(mockDoc);
+		await mgr.openFileForReview(paths[0]);
+
+		const openedFiles = setupOpenMock(mgr);
+		await mgr.reviewNextUnresolved();
+
+		// Only one file — fallback opens it
+		expect(openedFiles).toEqual([paths[0]]);
+	});
+
+	it("does nothing when no unresolved files", async () => {
+		const mgr = setupManager();
+		const openedFiles = setupOpenMock(mgr);
+
+		await mgr.reviewNextUnresolved();
+
+		expect(openedFiles).toHaveLength(0);
+	});
+
+	it("skips resolved files and finds next unresolved", async () => {
+		const mgr = setupManager();
+		const paths = addMultipleFiles(mgr, 3);
+
+		// Be on file0, resolve file1
+		const mergedContent = state.activeReviews.get(paths[0])!.mergedLines.join("\n");
+		const mockDoc = mockOpenTextDocument(mergedContent);
+		mockDoc.uri.fsPath = paths[0];
+		mockShowTextDocument(mockDoc);
+		await mgr.openFileForReview(paths[0]);
+
+		// Resolve file1 (remove from activeReviews)
+		state.activeReviews.delete(paths[1]);
+
+		const openedFiles = setupOpenMock(mgr);
+		await mgr.reviewNextUnresolved();
+
+		// Should skip file0 (current) and file1 (resolved), open file2
+		expect(openedFiles).toEqual([paths[2]]);
 	});
 });

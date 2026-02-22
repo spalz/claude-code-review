@@ -69,6 +69,8 @@ beforeEach(() => {
 	vi.useFakeTimers();
 	state.activeReviews.clear();
 	state.setReviewFiles([]);
+	// Reset mockReturnValue (clearAllMocks doesn't reset return values)
+	mockServer.getSnapshot.mockReturnValue(undefined);
 });
 
 afterEach(() => {

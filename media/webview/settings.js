@@ -1,4 +1,5 @@
-// Settings panel — shortcuts display, hook status, CLI command
+// Settings — shortcuts display, hook status, CLI command
+// Now rendered inside #settingsOverlay instead of a tab panel
 (function () {
 	"use strict";
 
@@ -18,7 +19,7 @@
 		el.innerHTML = html;
 	};
 
-	// Static button listeners
+	// Static button listeners (IDs remain the same as before)
 	document.getElementById("hookActionBtn").addEventListener("click", function () {
 		send("install-hook");
 	});

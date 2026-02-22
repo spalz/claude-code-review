@@ -84,8 +84,24 @@ export class CodeLens {
 	}
 }
 
+export class ThemeColor {
+	id: string;
+	constructor(id: string) { this.id = id; }
+}
+
+export enum OverviewRulerLane {
+	Left = 1,
+	Center = 2,
+	Right = 4,
+	Full = 7,
+}
+
 export const workspace = {
 	openTextDocument: vi.fn().mockResolvedValue({ uri: { fsPath: "" } }),
 	onDidChangeTextDocument: vi.fn().mockReturnValue({ dispose: vi.fn() }),
 	onDidCloseTextDocument: vi.fn().mockReturnValue({ dispose: vi.fn() }),
+	getConfiguration: vi.fn().mockReturnValue({
+		get: vi.fn().mockImplementation((_key: string, defaultValue?: unknown) => defaultValue),
+		update: vi.fn().mockResolvedValue(undefined),
+	}),
 };

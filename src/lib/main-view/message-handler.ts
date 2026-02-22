@@ -4,7 +4,14 @@ import * as fs from "fs";
 import * as path from "path";
 import * as log from "../log";
 import * as state from "../state";
-import { renameSession, markSessionInvalid } from "../sessions";
+import {
+	renameSession,
+	deleteSession,
+	archiveSession,
+	unarchiveSession,
+	listSessions,
+	listArchivedSessions,
+} from "../sessions";
 import type { PtyManager } from "../pty-manager";
 import type { SessionManager } from "./session-manager";
 import type { KeybindingInfo, HookStatus, ExtensionToWebviewMessage } from "../../types";
@@ -42,8 +49,7 @@ export function handleWebviewMessage(
 			ctx.sessionMgr.refreshClaudeSessions();
 			ctx.sessionMgr.restoreSessions();
 			// Refresh review state in case restore() completed before webview was ready
-			// eslint-disable-next-line @typescript-eslint/no-require-imports
-			(require("../state") as { refreshAll: () => void }).refreshAll();
+			state.refreshAll();
 			ctx.postMessage({
 				type: "settings-init",
 				cliCommand: vscode.workspace
@@ -96,11 +102,42 @@ export function handleWebviewMessage(
 			break;
 		}
 
-		case "hide-session": {
+		case "delete-session": {
 			const sessionId = msg.sessionId as string;
-			log.log(`hide: ${sessionId.slice(0, 8)}`);
-			markSessionInvalid(ctx.wp, sessionId);
+			log.log(`delete: ${sessionId.slice(0, 8)}`);
+			// Close PTY if session is open
+			const ptyId = ctx.sessionMgr.findPtyByClaudeId(sessionId);
+			if (ptyId !== null) {
+				ctx.ptyManager.closeSession(ptyId);
+				ctx.sessionMgr.getPtyToClaudeId().delete(ptyId);
+				ctx.sessionMgr.removeOpenSession(ptyId);
+				ctx.postMessage({ type: "terminal-session-closed", sessionId: ptyId });
+				ctx.sessionMgr.sendOpenSessionIds();
+			}
+			deleteSession(ctx.wp, sessionId);
 			ctx.sessionMgr.refreshClaudeSessions();
+			break;
+		}
+
+		case "archive-session": {
+			const sessionId = msg.sessionId as string;
+			log.log(`archive: ${sessionId.slice(0, 8)}`);
+			archiveSession(ctx.wp, sessionId);
+			ctx.sessionMgr.refreshClaudeSessions();
+			break;
+		}
+
+		case "unarchive-session": {
+			const sessionId = msg.sessionId as string;
+			log.log(`unarchive: ${sessionId.slice(0, 8)}`);
+			unarchiveSession(ctx.wp, sessionId);
+			ctx.sessionMgr.refreshClaudeSessions();
+			break;
+		}
+
+		case "load-archived-sessions": {
+			const sessions = listArchivedSessions(ctx.wp);
+			ctx.postMessage({ type: "archived-sessions-list", sessions });
 			break;
 		}
 
@@ -256,6 +293,57 @@ export function handleWebviewMessage(
 			vscode.workspace
 				.getConfiguration("claudeCodeReview")
 				.update("cliCommand", msg.value as string, true);
+			break;
+
+		// --- New message handlers for toolbar ---
+
+		case "undo-review":
+			vscode.commands.executeCommand("ccr.undo");
+			break;
+
+		case "redo-review":
+			vscode.commands.executeCommand("ccr.redo");
+			break;
+
+		case "keep-current-file":
+			vscode.commands.executeCommand("ccr.keepCurrentFile");
+			break;
+
+		case "undo-current-file":
+			vscode.commands.executeCommand("ccr.undoCurrentFile");
+			break;
+
+		case "navigate-hunk": {
+			const actions = require("../actions") as typeof import("../actions");
+			actions.navigateHunk(msg.direction as -1 | 1);
+			break;
+		}
+
+		case "review-next-file": {
+			const actions = require("../actions") as typeof import("../actions");
+			actions.reviewNextUnresolved();
+			break;
+		}
+
+		case "load-sessions": {
+			const offset = (msg.offset as number) || 0;
+			const limit = (msg.limit as number) || 10;
+			const result = listSessions(ctx.wp, limit, offset);
+			ctx.postMessage({
+				type: "sessions-page",
+				sessions: result.sessions,
+				offset,
+				hasMore: result.hasMore,
+			});
+			break;
+		}
+
+		case "accept-all-confirm":
+			vscode.commands.executeCommand("ccr.acceptAll");
+			break;
+
+		case "reject-all-confirm":
+			vscode.commands.executeCommand("ccr.rejectAll");
 			break;
 	}
 

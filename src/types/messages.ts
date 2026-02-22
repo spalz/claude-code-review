@@ -4,7 +4,8 @@ import type { SessionInfo } from "./session";
 import type { PtySessionInfo } from "./pty";
 
 export type ExtensionToWebviewMessage =
-	| { type: "sessions-list"; sessions: SessionInfo[] }
+	| { type: "sessions-list"; sessions: SessionInfo[]; archivedCount: number }
+	| { type: "archived-sessions-list"; sessions: SessionInfo[] }
 	| { type: "open-sessions-update"; openClaudeIds: string[] }
 	| { type: "activate-terminal"; sessionId: number }
 	| {
@@ -24,6 +25,12 @@ export type ExtensionToWebviewMessage =
 			type: "state-update";
 			review: ReviewStateUpdate;
 			activeSessions: PtySessionInfo[];
+	  }
+	| {
+			type: "sessions-page";
+			sessions: SessionInfo[];
+			offset: number;
+			hasMore: boolean;
 	  };
 
 export type WebviewToExtensionMessage =
@@ -32,7 +39,10 @@ export type WebviewToExtensionMessage =
 	| { type: "resume-claude-session"; claudeSessionId: string }
 	| { type: "refresh-sessions" }
 	| { type: "rename-session"; sessionId: string; newName: string }
-	| { type: "hide-session"; sessionId: string }
+	| { type: "delete-session"; sessionId: string }
+	| { type: "archive-session"; sessionId: string }
+	| { type: "unarchive-session"; sessionId: string }
+	| { type: "load-archived-sessions" }
 	| { type: "terminal-input"; sessionId: number; data: string }
 	| { type: "terminal-resize"; sessionId: number; cols: number; rows: number }
 	| { type: "close-terminal"; sessionId: number }
@@ -52,4 +62,13 @@ export type WebviewToExtensionMessage =
 	| { type: "install-hook" }
 	| { type: "open-keybindings" }
 	| { type: "set-active-session"; claudeId: string | null }
-	| { type: "set-cli-command"; value: string };
+	| { type: "set-cli-command"; value: string }
+	| { type: "undo-review" }
+	| { type: "redo-review" }
+	| { type: "navigate-hunk"; direction: -1 | 1 }
+	| { type: "review-next-file" }
+	| { type: "load-sessions"; offset: number; limit: number }
+	| { type: "accept-all-confirm" }
+	| { type: "reject-all-confirm" }
+	| { type: "keep-current-file" }
+	| { type: "undo-current-file" };

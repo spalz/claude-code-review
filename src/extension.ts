@@ -51,6 +51,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
 		state.setCodeLensProvider(codeLens);
 		state.setMainView(mainView);
+		mainView.setReviewManager(reviewManager);
 		reviewManager.setProviders(codeLens, mainView);
 
 		// Wire pty output to webview
@@ -91,7 +92,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
 		// --- Main status bar button ---
 		const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-		statusBar.text = "$(layers) Claude Code Review";
+		statusBar.text = "✻ Claude Code Review";
 		statusBar.tooltip = "Toggle Claude Code Review panel (Option+Ctrl+B)";
 		statusBar.command = "ccr.togglePanel";
 		statusBar.show();
@@ -200,12 +201,16 @@ export function activate(context: vscode.ExtensionContext): void {
 			context.subscriptions.push(vscode.commands.registerCommand(id, handler));
 		}
 
-		// --- Re-apply decorations on tab switch ---
+		// --- Re-apply decorations on tab switch + refresh toolbar state ---
 		context.subscriptions.push(
 			vscode.window.onDidChangeActiveTextEditor((editor) => {
-				if (!editor) return;
-				const review = state.activeReviews.get(editor.document.uri.fsPath);
-				if (review) applyDecorations(editor, review);
+				if (editor) {
+					const review = state.activeReviews.get(editor.document.uri.fsPath);
+					if (review) applyDecorations(editor, review);
+				}
+				// Always refresh — including when editor is undefined (all tabs closed)
+				// so the toolbar switches from full navigation to "Review next file"
+				state.refreshAll();
 			}),
 		);
 
@@ -231,7 +236,7 @@ export function activate(context: vscode.ExtensionContext): void {
 			if (restored) {
 				log.log("Review state restored from persistence");
 				vscode.commands.executeCommand("setContext", "ccr.reviewActive", true);
-				await reviewManager!.reviewNextUnresolved();
+				await reviewManager!.openCurrentOrNext();
 				state.refreshAll();
 			}
 		});

@@ -1,7 +1,8 @@
 import * as vscode from "vscode";
 import * as log from "../log";
-import { markSessionInvalid } from "../sessions";
+import { archiveSession } from "../sessions";
 import type { PtyManager } from "../pty-manager";
+import type { ReviewManager } from "../review-manager";
 import type { HookStatus, ExtensionToWebviewMessage } from "../../types";
 import { buildWebviewHtml } from "./html-builder";
 import { SessionManager } from "./session-manager";
@@ -15,6 +16,7 @@ export class MainViewProvider implements vscode.WebviewViewProvider {
 	private _webviewReady = false;
 	private _pendingHookStatus: HookStatus | null = null;
 	private readonly _sessionMgr: SessionManager;
+	private _reviewManager: ReviewManager | undefined;
 
 	constructor(
 		private readonly _wp: string,
@@ -25,6 +27,10 @@ export class MainViewProvider implements vscode.WebviewViewProvider {
 		this._sessionMgr = new SessionManager(_wp, _ptyManager, workspaceState, (msg) =>
 			this._postMessage(msg),
 		);
+	}
+
+	setReviewManager(rm: ReviewManager): void {
+		this._reviewManager = rm;
 	}
 
 	resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -84,7 +90,7 @@ export class MainViewProvider implements vscode.WebviewViewProvider {
 			log.log(`Terminal error detected: session=${sessionId}, "No conversation found"`);
 			const claudeId = this._sessionMgr.getPtyToClaudeId().get(sessionId);
 			if (claudeId) {
-				markSessionInvalid(this._wp, claudeId);
+				archiveSession(this._wp, claudeId);
 			}
 			this._postMessage({
 				type: "terminal-error",
@@ -108,7 +114,7 @@ export class MainViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	private _sendStateUpdate(): void {
-		const payload = buildStateUpdate(this._wp, this._ptyManager);
+		const payload = buildStateUpdate(this._wp, this._ptyManager, this._reviewManager);
 		this._postMessage({
 			type: "state-update",
 			review: payload.review,

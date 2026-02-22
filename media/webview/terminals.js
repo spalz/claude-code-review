@@ -21,7 +21,7 @@
 			if (s) displayName = s.title;
 		}
 
-		// Tab element
+		// Tab element — inserted into header's terminal bar
 		var tab = document.createElement("div");
 		tab.className = "terminal-tab";
 		tab.dataset.tid = id;
@@ -46,9 +46,7 @@
 
 		tab.appendChild(nameSpan);
 		tab.appendChild(closeSpan);
-		var bar = document.getElementById("terminalBar");
-		var addBtn = bar.querySelector(".terminal-bar-add");
-		bar.insertBefore(tab, addBtn);
+		document.getElementById("terminalBar").appendChild(tab);
 
 		// Container
 		var container = document.createElement("div");
@@ -143,7 +141,7 @@
 	window.fitActiveTerminal = function () {
 		if (!activeTerminalId) return;
 		var t = terminals.get(activeTerminalId);
-		if (t && window.activeTab === "claude") {
+		if (t && window.viewMode === "terminals") {
 			setTimeout(function () {
 				try {
 					t.fitAddon.fit();

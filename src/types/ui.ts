@@ -15,6 +15,12 @@ export interface ReviewStateUpdate {
 	unresolvedHunks: number;
 	totalHunks: number;
 	files: ReviewFileInfo[];
+	currentHunkIndex: number;
+	currentFileIndex: number;
+	unresolvedFileCount: number;
+	canUndo: boolean;
+	canRedo: boolean;
+	activeEditorInReview: boolean;
 }
 
 export interface KeybindingInfo {

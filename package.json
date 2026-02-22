@@ -4,6 +4,7 @@
 	"description": "Claude Code session manager, code review, and statistics — opens in the right sidebar",
 	"version": "8.0.0",
 	"publisher": "local",
+	"icon": "media/claude-icon-color-bg-round.svg",
 	"engines": {
 		"vscode": "^1.100.0"
 	},
@@ -146,7 +147,7 @@
 				{
 					"id": "ccr",
 					"title": "Claude Code Review",
-					"icon": "media/icon.svg"
+					"icon": "media/claude-icon-dark.svg"
 				}
 			]
 		},
@@ -235,5 +236,8 @@
 		"prettier": "^3.8.1",
 		"typescript": "^5.9.3",
 		"vitest": "^4.0.18"
+	},
+	"dependencies": {
+		"@vscode-elements/elements": "^2.5.1"
 	}
 }

@@ -1,4 +1,4 @@
-// Sessions list rendering, context menu, inline rename
+// Sessions list rendering, context menu, inline rename, popup
 (function () {
 	"use strict";
 
@@ -24,8 +24,13 @@
 				'<div class="empty">No sessions found<br><span class="sub">Click + to start a new Claude session</span></div>';
 			return;
 		}
+		el.innerHTML = buildSessionListHtml(cachedSessions);
+		bindSessionItems(el);
+	};
+
+	function buildSessionListHtml(sessions) {
 		var html = "";
-		cachedSessions.forEach(function (s) {
+		sessions.forEach(function (s) {
 			var date = new Date(s.timestamp);
 			var ago = timeAgo(date);
 			var msgs = s.messageCount ? s.messageCount + " msgs" : "";
@@ -43,9 +48,11 @@
 			if (s.branch) html += '<span class="branch">' + esc(s.branch) + "</span>";
 			html += "</div>";
 		});
-		el.innerHTML = html;
+		return html;
+	}
 
-		el.querySelectorAll(".session-item").forEach(function (item) {
+	function bindSessionItems(container) {
+		container.querySelectorAll(".session-item").forEach(function (item) {
 			var sid = item.dataset.sid;
 			item.onclick = function () {
 				resumeSession(sid);
@@ -54,7 +61,7 @@
 				showCtxMenu(e, sid);
 			};
 		});
-	};
+	}
 
 	function timeAgo(date) {
 		var sec = Math.floor((Date.now() - date.getTime()) / 1000);
@@ -77,22 +84,29 @@
 
 	// --- Context menu ---
 
-	function showCtxMenu(e, sessionId) {
+	function showCtxMenu(e, sessionId, isArchived) {
 		e.preventDefault();
 		e.stopPropagation();
 		var s = cachedSessions.find(function (x) {
 			return x.id === sessionId;
 		});
 		var isOpen = openClaudeIds.has(sessionId);
-		ctxTarget = { sessionId: sessionId, title: s ? s.title : "", isOpen: isOpen };
+		ctxTarget = { sessionId: sessionId, title: s ? s.title : "", isOpen: isOpen, isArchived: !!isArchived };
 
 		var menu = document.getElementById("ctxMenu");
-		var html = '<div class="ctx-menu-item" data-action="rename">Rename</div>';
-		if (isOpen) {
-			html += '<div class="ctx-menu-item" data-action="close">Close session</div>';
+		var html = "";
+		if (isArchived) {
+			html += '<div class="ctx-menu-item" data-action="unarchive">Restore</div>';
+			html += '<div class="ctx-menu-item danger" data-action="delete">Delete</div>';
+		} else {
+			html += '<div class="ctx-menu-item" data-action="rename">Rename</div>';
+			if (isOpen) {
+				html += '<div class="ctx-menu-item" data-action="close">Close session</div>';
+			}
+			html += '<div class="ctx-menu-sep"></div>';
+			html += '<div class="ctx-menu-item" data-action="archive">Archive</div>';
+			html += '<div class="ctx-menu-item danger" data-action="delete">Delete</div>';
 		}
-		html += '<div class="ctx-menu-sep"></div>';
-		html += '<div class="ctx-menu-item danger" data-action="hide">Hide from list</div>';
 		menu.innerHTML = html;
 
 		var rect = document.body.getBoundingClientRect();
@@ -131,8 +145,22 @@
 			startInlineRename(sessionId, title);
 		} else if (action === "close") {
 			send("close-session-by-claude-id", { claudeSessionId: sessionId });
-		} else if (action === "hide") {
-			send("hide-session", { sessionId: sessionId });
+		} else if (action === "archive") {
+			send("archive-session", { sessionId: sessionId });
+		} else if (action === "unarchive") {
+			send("unarchive-session", { sessionId: sessionId });
+			// Reload archive list if open
+			if (archiveOpen) {
+				send("load-archived-sessions");
+			}
+		} else if (action === "delete") {
+			showConfirm("Delete session permanently? This cannot be undone.", function () {
+				send("delete-session", { sessionId: sessionId });
+				// Reload archive list if the deleted session was archived
+				if (ctxTarget && ctxTarget.isArchived && archiveOpen) {
+					send("load-archived-sessions");
+				}
+			});
 		}
 	}
 
@@ -190,28 +218,158 @@
 	window.showSessionsList = function () {
 		var loader = document.getElementById("sessionLoader");
 		if (loader) loader.remove();
-		document.getElementById("sessionsView").classList.remove("hidden");
-		document.getElementById("terminalView").classList.remove("active");
+		switchMode("sessions");
 		renderSessions(null);
 	};
 
 	window.showTerminalView = function () {
-		document.getElementById("sessionsView").classList.add("hidden");
-		document.getElementById("terminalView").classList.add("active");
-		if (window.fitActiveTerminal) setTimeout(window.fitActiveTerminal, 100);
+		switchMode("terminals");
 	};
 
-	// Static button listeners
-	document.getElementById("btnRefreshSessions").addEventListener("click", function () {
+	// --- Header button listeners ---
+
+	document.getElementById("btnRefresh").addEventListener("click", function () {
 		send("refresh-sessions");
 	});
-	document.getElementById("btnNewSession").addEventListener("click", function () {
+	document.getElementById("btnNewChat").addEventListener("click", function () {
 		send("new-claude-session");
 	});
-	document.getElementById("btnBackToSessions").addEventListener("click", function () {
-		showSessionsList();
+	document.getElementById("btnSettings").addEventListener("click", function () {
+		showSettings();
 	});
-	document.getElementById("btnNewTerminal").addEventListener("click", function () {
+	document.getElementById("btnNewChat2").addEventListener("click", function () {
 		send("new-claude-session");
 	});
+	document.getElementById("btnSettings2").addEventListener("click", function () {
+		showSettings();
+	});
+	document.getElementById("btnSessionsList").addEventListener("click", function (e) {
+		e.stopPropagation();
+		var popup = document.getElementById("sessionsPopup");
+		if (popup.style.display === "none") {
+			loadSessionsPopup(0);
+			popup.style.display = "";
+		} else {
+			popup.style.display = "none";
+		}
+	});
+
+	// --- Sessions popup with lazy loading ---
+
+	var popupOffset = 0;
+	var popupLoading = false;
+
+	window.loadSessionsPopup = function (offset) {
+		popupOffset = offset;
+		popupLoading = true;
+		document.getElementById("sessionsPopupLoader").style.display = "";
+		if (offset === 0) {
+			document.getElementById("sessionsPopupList").innerHTML = "";
+		}
+		send("load-sessions", { offset: offset, limit: 10 });
+	};
+
+	window.renderSessionsPopup = function (sessions, offset, hasMore) {
+		popupLoading = false;
+		document.getElementById("sessionsPopupLoader").style.display = "none";
+
+		var list = document.getElementById("sessionsPopupList");
+		if (offset === 0) list.innerHTML = "";
+
+		var html = buildSessionListHtml(sessions);
+		var fragment = document.createElement("div");
+		fragment.innerHTML = html;
+
+		// Bind click handlers for popup items
+		fragment.querySelectorAll(".session-item").forEach(function (item) {
+			var sid = item.dataset.sid;
+			item.onclick = function () {
+				document.getElementById("sessionsPopup").style.display = "none";
+				resumeSession(sid);
+			};
+		});
+
+		while (fragment.firstChild) {
+			list.appendChild(fragment.firstChild);
+		}
+
+		// Store hasMore for scroll handler
+		list.dataset.hasMore = hasMore ? "1" : "0";
+		popupOffset = offset + sessions.length;
+	};
+
+	// Scroll-to-load-more in popup
+	document.getElementById("sessionsPopupScroll").addEventListener("scroll", function () {
+		var el = this;
+		var list = document.getElementById("sessionsPopupList");
+		if (
+			!popupLoading &&
+			list.dataset.hasMore === "1" &&
+			el.scrollTop + el.clientHeight >= el.scrollHeight - 30
+		) {
+			loadSessionsPopup(popupOffset);
+		}
+	});
+
+	// --- Archive section ---
+
+	var archiveOpen = false;
+	var archiveLoaded = false;
+
+	window.updateArchiveButton = function (count) {
+		var section = document.getElementById("archiveSection");
+		var countEl = document.getElementById("archiveCount");
+		if (count > 0) {
+			section.style.display = "";
+			countEl.textContent = count;
+		} else {
+			section.style.display = "none";
+			// Reset state when no archived sessions
+			archiveOpen = false;
+			archiveLoaded = false;
+			document.getElementById("archiveList").style.display = "none";
+			document.getElementById("archiveArrow").classList.remove("open");
+		}
+	};
+
+	function toggleArchive() {
+		archiveOpen = !archiveOpen;
+		var list = document.getElementById("archiveList");
+		var arrow = document.getElementById("archiveArrow");
+		if (archiveOpen) {
+			list.style.display = "";
+			arrow.classList.add("open");
+			if (!archiveLoaded) {
+				list.innerHTML = '<div class="empty" style="padding:12px;font-size:12px">Loading...</div>';
+				send("load-archived-sessions");
+				archiveLoaded = true;
+			}
+		} else {
+			list.style.display = "none";
+			arrow.classList.remove("open");
+		}
+	}
+
+	document.getElementById("archiveToggle").addEventListener("click", toggleArchive);
+
+	window.renderArchivedSessions = function (sessions) {
+		var list = document.getElementById("archiveList");
+		if (!sessions || sessions.length === 0) {
+			list.innerHTML = '<div class="empty" style="padding:12px;font-size:12px">No archived sessions</div>';
+			return;
+		}
+		list.innerHTML = buildSessionListHtml(sessions);
+		list.querySelectorAll(".session-item").forEach(function (item) {
+			var sid = item.dataset.sid;
+			item.onclick = function () {
+				resumeSession(sid);
+			};
+			item.oncontextmenu = function (e) {
+				showCtxMenu(e, sid, true);
+			};
+		});
+		// Reset loaded flag so next toggle will reload fresh data
+		archiveLoaded = true;
+	};
+
 })();

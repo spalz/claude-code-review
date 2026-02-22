@@ -5,7 +5,6 @@ vi.mock("vscode", async () => {
 	const mock = await import("./mocks/vscode");
 	return {
 		...mock,
-		OverviewRulerLane: { Left: 1, Center: 2, Right: 4, Full: 7 },
 		window: {
 			...mock.window,
 			createTextEditorDecorationType: vi.fn(() => ({

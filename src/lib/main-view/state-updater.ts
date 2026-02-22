@@ -2,7 +2,9 @@ import * as vscode from "vscode";
 import * as path from "path";
 import * as state from "../state";
 import * as log from "../log";
+import { hasUndoState, hasRedoState } from "../undo-history";
 import type { PtyManager } from "../pty-manager";
+import type { ReviewManager } from "../review-manager";
 import type {
 	KeybindingInfo,
 	ReviewStateUpdate,
@@ -15,12 +17,41 @@ export interface StateUpdatePayload {
 	activeSessions: PtySessionInfo[];
 }
 
-export function buildStateUpdate(wp: string, ptyManager: PtyManager): StateUpdatePayload {
+export function buildStateUpdate(
+	wp: string,
+	ptyManager: PtyManager,
+	reviewManager?: ReviewManager,
+): StateUpdatePayload {
 	const files = state.getReviewFiles();
 	const idx = state.getCurrentFileIndex();
 	const remaining = files.filter((f) => state.activeReviews.has(f)).length;
 	const currentFile = files[idx];
 	const review = currentFile ? state.activeReviews.get(currentFile) : undefined;
+
+	// Determine if the active editor is a file under review
+	const activeEditor = vscode.window.activeTextEditor;
+	const activeEditorPath = activeEditor?.document.uri.fsPath;
+	const activeEditorInReview = activeEditorPath
+		? state.activeReviews.has(activeEditorPath)
+		: false;
+
+	// Compute undo/redo availability across all review files
+	let canUndo = false;
+	let canRedo = false;
+	for (const f of files) {
+		if (state.activeReviews.has(f)) {
+			if (hasUndoState(f)) canUndo = true;
+			if (hasRedoState(f)) canRedo = true;
+			if (canUndo && canRedo) break;
+		}
+	}
+
+	// Current hunk index from review manager
+	const currentHunkIndex = reviewManager ? reviewManager.getCurrentHunkIndex() : 0;
+	const currentFileIndex = reviewManager ? reviewManager.getCurrentFileIndex() : idx;
+
+	// Count unresolved files
+	const unresolvedFileCount = files.filter((f) => state.activeReviews.has(f)).length;
 
 	const fileList: ReviewFileInfo[] = files.map((f, i) => {
 		const r = state.activeReviews.get(f);
@@ -45,6 +76,12 @@ export function buildStateUpdate(wp: string, ptyManager: PtyManager): StateUpdat
 			unresolvedHunks: review ? review.unresolvedCount : 0,
 			totalHunks: review ? review.hunks.length : 0,
 			files: fileList,
+			currentHunkIndex,
+			currentFileIndex,
+			unresolvedFileCount,
+			canUndo,
+			canRedo,
+			activeEditorInReview,
 		},
 		activeSessions: ptyManager.getSessions(),
 	};

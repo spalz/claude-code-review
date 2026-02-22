@@ -117,13 +117,12 @@ export class ReviewManager implements vscode.Disposable {
 		this.scheduleSave();
 		this._onReviewStateChange.fire(true);
 
-		// Apply to already-open editor
-		this.applyToOpenEditor(absFilePath, review);
-	}
-
-	private applyToOpenEditor(filePath: string, review: import("../types").IFileReview): void {
-		initHistory(filePath);
-		this.applyContentViaEdit(filePath, review.mergedLines.join("\n"));
+		// NOTE: We intentionally do NOT call applyToOpenEditor here.
+		// addFile() is called from the PostToolUse hook while Claude Code is still
+		// actively editing. Overwriting the file with merged content would corrupt
+		// the file for subsequent Claude edits ("File has been modified since read").
+		// Merged content is applied only when the user explicitly opens a file for
+		// review via openFileForReview() or navigates to it.
 	}
 
 	private async applyContentViaEdit(filePath: string, newContent: string, revealLine?: number): Promise<void> {
@@ -261,9 +260,25 @@ export class ReviewManager implements vscode.Disposable {
 	}
 
 	async reviewNextUnresolved(): Promise<void> {
-		const next = this.reviewFiles.find((f) => state.activeReviews.has(f));
+		const currentFile = this.reviewFiles[this.currentFileIndex];
+		// Skip the current file — find the next unresolved one
+		const next = this.reviewFiles.find((f) => f !== currentFile && state.activeReviews.has(f))
+			// Fallback: if no other file found, open the first unresolved (may be current)
+			?? this.reviewFiles.find((f) => state.activeReviews.has(f));
 		if (next) {
 			await this.openFileForReview(next);
+		}
+	}
+
+	async openCurrentOrNext(): Promise<void> {
+		const files = this.reviewFiles.filter((f) => state.activeReviews.has(f));
+		if (files.length === 0) return;
+		// Try to open the file at the saved currentFileIndex
+		const target = this.reviewFiles[this.currentFileIndex];
+		if (target && state.activeReviews.has(target)) {
+			await this.openFileForReview(target);
+		} else {
+			await this.openFileForReview(files[0]);
 		}
 	}
 
@@ -280,6 +295,28 @@ export class ReviewManager implements vscode.Disposable {
 			preview: false,
 			viewColumn: vscode.ViewColumn.One,
 		});
+
+		// If the file was already open, the editor may have stale cached content.
+		// Sync editor content with merged content before applying decorations.
+		if (doc.getText() !== mergedContent) {
+			log.log(`openFileForReview: editor content stale, syncing via edit for ${filePath}`);
+			setApplyingEdit(filePath, true);
+			try {
+				const lastLine = doc.lineCount - 1;
+				const fullRange = new vscode.Range(
+					0, 0,
+					lastLine, doc.lineAt(lastLine).text.length,
+				);
+				await editor.edit(
+					(eb) => eb.replace(fullRange, mergedContent),
+					{ undoStopBefore: true, undoStopAfter: true },
+				);
+				await doc.save();
+			} finally {
+				setApplyingEdit(filePath, false);
+			}
+		}
+
 		applyDecorations(editor, review);
 
 		const firstRange = review.hunkRanges[0];

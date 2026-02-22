@@ -7,6 +7,15 @@
 		switch (msg.type) {
 			case "sessions-list":
 				renderSessions(msg.sessions);
+				if (typeof updateArchiveButton === "function") {
+					updateArchiveButton(msg.archivedCount || 0);
+				}
+				break;
+
+			case "archived-sessions-list":
+				if (typeof renderArchivedSessions === "function") {
+					renderArchivedSessions(msg.sessions);
+				}
 				break;
 
 			case "open-sessions-update":
@@ -100,8 +109,7 @@
 				if (activeId) {
 					var ti = getTerminals().get(activeId);
 					if (ti) {
-						switchTab("claude");
-						showTerminalView();
+						switchMode("terminals");
 						activateTerminal(activeId);
 						send("terminal-input", { sessionId: activeId, data: msg.text });
 						setTimeout(function () {
@@ -137,8 +145,12 @@
 						}
 					}
 					setCurrentFilePath(activeFile);
-					renderReview(msg.review);
+					renderReviewToolbar(msg.review);
 				}
+				break;
+
+			case "sessions-page":
+				renderSessionsPopup(msg.sessions, msg.offset, msg.hasMore);
 				break;
 		}
 	});

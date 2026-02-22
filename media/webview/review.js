@@ -1,4 +1,4 @@
-// Review panel rendering — file list, actions, accept/reject
+// Review toolbar rendering — compact toolbar replacing the old review panel
 (function () {
 	"use strict";
 
@@ -27,104 +27,153 @@
 		if (currentFilePath) send("reject-file", { filePath: currentFilePath });
 	};
 
-	// Event delegation — one listener for all dynamic review buttons
-	document.getElementById("reviewContent").addEventListener("click", function (e) {
+	// Event delegation on review toolbar
+	document.getElementById("reviewToolbar").addEventListener("click", function (e) {
 		var btn = e.target.closest("[data-action]");
-		if (btn) {
-			e.stopPropagation();
-			var action = btn.dataset.action;
-			var fp = btn.dataset.path;
-			if (action === "prev-file") send("prev-file");
-			else if (action === "next-file") send("next-file");
-			else if (action === "accept-current") acceptCurrentFile();
-			else if (action === "reject-current") rejectCurrentFile();
-			else if (action === "accept-all") send("accept-all");
-			else if (action === "reject-all") send("reject-all");
-			else if (action === "accept-file" && fp) acceptFile(fp);
-			else if (action === "reject-file" && fp) rejectFile(fp);
-			return;
+		if (!btn) return;
+		e.stopPropagation();
+
+		var action = btn.dataset.action;
+		switch (action) {
+			case "prev-hunk":
+				send("navigate-hunk", { direction: -1 });
+				break;
+			case "next-hunk":
+				send("navigate-hunk", { direction: 1 });
+				break;
+			case "keep-current-file":
+				send("keep-current-file");
+				break;
+			case "undo-current-file":
+				send("undo-current-file");
+				break;
+			case "prev-file":
+				send("prev-file");
+				break;
+			case "next-file":
+				send("next-file");
+				break;
+			case "accept-all":
+				showConfirm("Accept all remaining changes?", function () {
+					send("accept-all-confirm");
+				});
+				break;
+			case "reject-all":
+				showConfirm("Reject all remaining changes?", function () {
+					send("reject-all-confirm");
+				});
+				break;
+			case "review-next-file":
+				send("review-next-file");
+				break;
 		}
-		var fileRow = e.target.closest(".file[data-path]");
-		if (fileRow) goToFile(fileRow.dataset.path);
 	});
 
-	window.renderReview = function (data) {
+	/**
+	 * Render the review toolbar based on current state.
+	 * State A: user has an active review file open — full navigation toolbar
+	 * State B: review files exist but user is not viewing one — "Review next file" button
+	 * State C: no review files — toolbar hidden
+	 */
+	window.renderReviewToolbar = function (data) {
 		if (!data) return;
-		var el = document.getElementById("reviewContent");
+
+		var toolbar = document.getElementById("reviewToolbar");
 		var remaining = data.remaining;
 		var total = data.total;
-		var currentFile = data.currentFile;
 		var unresolvedHunks = data.unresolvedHunks;
 		var totalHunks = data.totalHunks;
-		var files = data.files;
-		var noReview = remaining === 0 && files.length === 0;
+		var activeEditorInReview = data.activeEditorInReview;
+		var currentHunkIndex = data.currentHunkIndex;
+		var currentFileIndex = data.currentFileIndex;
+		var unresolvedFileCount = data.unresolvedFileCount;
+		var canUndo = data.canUndo;
+		var canRedo = data.canRedo;
+		var noReview = remaining === 0 && data.files.length === 0;
 
-		// Update Review tab badge
-		var reviewTab = document.querySelector('.tab[data-tab="review"]');
-		if (reviewTab) {
-			reviewTab.textContent = remaining > 0 ? "Review (" + remaining + ")" : "Review";
-			reviewTab.dataset.tab = "review";
+		// State C: no review — hide toolbar
+		if (noReview) {
+			toolbar.style.display = "none";
+			toolbar.innerHTML = "";
+			return;
 		}
 
+		toolbar.style.display = "";
+
+		// State B: review exists but user not in a review file
+		if (!activeEditorInReview) {
+			toolbar.innerHTML =
+				'<button class="toolbar-btn-text" data-action="review-next-file">' +
+				"\u25B6 Review next file (" +
+				remaining +
+				"/" +
+				total +
+				")" +
+				"</button>";
+			return;
+		}
+
+		// State A: full toolbar
 		var html = "";
 
-		if (noReview) {
+		// Hunk navigation group
+		html += '<div class="toolbar-group">';
+		html +=
+			'<button class="toolbar-btn" data-action="prev-hunk" title="Previous change (\u2318[)">\u25B2</button>';
+		html +=
+			'<span class="toolbar-label">' +
+			(currentHunkIndex + 1) +
+			"/" +
+			totalHunks +
+			"</span>";
+		html +=
+			'<button class="toolbar-btn" data-action="next-hunk" title="Next change (\u2318])">\u25BC</button>';
+		html += "</div>";
+
+		// Separator
+		html += '<div class="toolbar-separator"></div>';
+
+		// Keep/Undo current file group
+		html += '<div class="toolbar-group">';
+		html +=
+			'<button class="toolbar-btn-text accent" data-action="keep-current-file" title="Keep file changes">Keep</button>';
+		html +=
+			'<button class="toolbar-btn-text" data-action="undo-current-file" title="Undo file changes">Undo</button>';
+		html += "</div>";
+
+		// Separator
+		html += '<div class="toolbar-separator"></div>';
+
+		// File navigation group (hide arrows if only 1 file)
+		html += '<div class="toolbar-group">';
+		if (total > 1) {
 			html +=
-				'<div class="empty">No changes from Claude yet<br><span class="sub">Changes will appear here automatically</span></div>';
-		} else {
-			if (currentFile) {
-				html +=
-					'<div class="r-info">' +
-					esc(currentFile) +
-					" &mdash; " +
-					unresolvedHunks +
-					"/" +
-					totalHunks +
-					" changes</div>";
-				html += '<div class="actions">';
-				html += '<button class="btn nav" data-action="prev-file">&lsaquo;</button>';
-				html += '<button class="btn nav" data-action="next-file">&rsaquo;</button>';
-				html +=
-					'<button class="btn keep" data-action="accept-current">&#10003; Accept File</button>';
-				html +=
-					'<button class="btn undo" data-action="reject-current">&#10007; Reject File</button>';
-				html += "</div>";
-			}
-			html += '<div class="r-info">' + remaining + "/" + total + " files remaining</div>";
-			html += '<div class="actions">';
-			html +=
-				'<button class="btn keep" data-action="accept-all" ' +
-				(remaining === 0 ? "disabled" : "") +
-				">Accept All</button>";
-			html +=
-				'<button class="btn undo" data-action="reject-all" ' +
-				(remaining === 0 ? "disabled" : "") +
-				">Reject All</button>";
-			html += "</div>";
-			html += '<div class="sep"></div><div class="file-list-title">Files</div>';
-			files.forEach(function (f) {
-				var cls = f.active ? "file active" : f.done ? "file done" : "file";
-				var status = f.done ? "done" : f.unresolved + "/" + f.total;
-				var extIcon = f.external
-					? '<span style="color:#e8a838;margin-right:2px" title="External file">&#9888;</span>'
-					: "";
-				html += '<div class="' + cls + '" data-path="' + escAttr(f.path) + '">';
-				html += '<span class="file-icon">' + (f.done ? "&#10003;" : "&#9679;") + "</span>";
-				html += extIcon + '<span class="file-name">' + esc(f.name) + "</span>";
-				html += '<span class="file-status">' + status + "</span>";
-				if (!f.done) {
-					html +=
-						'<button class="fb keep-btn" data-action="accept-file" data-path="' +
-						escAttr(f.path) +
-						'" title="Accept">&#10003;</button>';
-					html +=
-						'<button class="fb undo-btn" data-action="reject-file" data-path="' +
-						escAttr(f.path) +
-						'" title="Reject">&#10007;</button>';
-				}
-				html += "</div>";
-			});
+				'<button class="toolbar-btn" data-action="prev-file" title="Previous file">\u25C0</button>';
 		}
-		el.innerHTML = html;
+		html +=
+			'<span class="toolbar-label">' +
+			(currentFileIndex + 1) +
+			"/" +
+			total +
+			"</span>";
+		if (total > 1) {
+			html +=
+				'<button class="toolbar-btn" data-action="next-file" title="Next file">\u25B6</button>';
+		}
+		html += "</div>";
+
+		// Accept/Reject All (pushed to right)
+		html += '<div class="toolbar-group" style="margin-left:auto">';
+		html +=
+			'<button class="toolbar-btn-text accept-all" data-action="accept-all" title="Accept all remaining"' +
+			(remaining === 0 ? " disabled" : "") +
+			">Accept All</button>";
+		html +=
+			'<button class="toolbar-btn reject-all" data-action="reject-all" title="Reject all remaining"' +
+			(remaining === 0 ? " disabled" : "") +
+			'><span class="codicon codicon-close"></span></button>';
+		html += "</div>";
+
+		toolbar.innerHTML = html;
 	};
 })();

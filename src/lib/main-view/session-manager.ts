@@ -16,9 +16,9 @@ export class SessionManager {
 	) {}
 
 	refreshClaudeSessions(): void {
-		const sessions = listSessions(this._wp, 30);
-		log.log(`refreshClaudeSessions: found ${sessions.length} sessions`);
-		this._postMessage({ type: "sessions-list", sessions });
+		const { sessions, archivedCount } = listSessions(this._wp, 30);
+		log.log(`refreshClaudeSessions: found ${sessions.length} sessions, ${archivedCount} archived`);
+		this._postMessage({ type: "sessions-list", sessions, archivedCount });
 		this.sendOpenSessionIds();
 	}
 

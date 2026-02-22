@@ -3,31 +3,31 @@ import * as vscode from "vscode";
 import type { IFileReview } from "../types";
 
 const decoAdded = vscode.window.createTextEditorDecorationType({
-	backgroundColor: "rgba(40, 167, 69, 0.15)",
+	backgroundColor: new vscode.ThemeColor("diffEditor.insertedLineBackground"),
 	isWholeLine: true,
-	overviewRulerColor: "#28a745",
+	overviewRulerColor: new vscode.ThemeColor("editorGutter.addedBackground"),
 	overviewRulerLane: vscode.OverviewRulerLane.Left,
 	borderWidth: "0 0 0 3px",
 	borderStyle: "solid",
-	borderColor: "#28a745",
+	borderColor: new vscode.ThemeColor("editorGutter.addedBackground"),
 });
 
 const decoRemoved = vscode.window.createTextEditorDecorationType({
-	backgroundColor: "rgba(220, 53, 69, 0.15)",
+	backgroundColor: new vscode.ThemeColor("diffEditor.removedLineBackground"),
 	isWholeLine: true,
-	overviewRulerColor: "#dc3545",
+	overviewRulerColor: new vscode.ThemeColor("editorGutter.deletedBackground"),
 	overviewRulerLane: vscode.OverviewRulerLane.Left,
 	opacity: "0.6",
 	textDecoration: "line-through",
 	borderWidth: "0 0 0 3px",
 	borderStyle: "solid",
-	borderColor: "#dc3545",
+	borderColor: new vscode.ThemeColor("editorGutter.deletedBackground"),
 });
 
 const decoSeparator = vscode.window.createTextEditorDecorationType({
 	borderWidth: "1px 0 0 0",
 	borderStyle: "dashed",
-	borderColor: "rgba(128, 128, 128, 0.4)",
+	borderColor: new vscode.ThemeColor("editorWidget.border"),
 });
 
 export function applyDecorations(editor: vscode.TextEditor, review: IFileReview): void {
