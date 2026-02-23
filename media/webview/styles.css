@@ -29,6 +29,9 @@
 .codicon-list-unordered::before {
 	content: "\ea85";
 }
+.codicon-arrow-left::before {
+	content: "\ea9b";
+}
 .codicon-check-all::before {
 	content: "\eab3";
 }
@@ -123,6 +126,24 @@ body {
 	opacity: 1;
 	background: var(--hover);
 }
+.header-icon.has-badge {
+	position: relative;
+}
+.header-icon.has-badge::after {
+	content: "";
+	position: absolute;
+	top: 2px;
+	right: 2px;
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: #dc3545;
+	pointer-events: none;
+}
+#headerTerminalMode > .header-icon:first-child {
+	flex-shrink: 0;
+	margin-right: 2px;
+}
 .terminal-tabs-area {
 	display: flex;
 	flex: 1;
@@ -132,6 +153,10 @@ body {
 	align-items: center;
 	min-width: 0;
 	padding: 2px 0;
+	scrollbar-width: none;
+}
+.terminal-tabs-area::-webkit-scrollbar {
+	display: none;
 }
 
 /* ===== REVIEW TOOLBAR ===== */
@@ -339,9 +364,9 @@ body {
 	border-radius: 2px;
 	flex-shrink: 0;
 }
-.session-item.open {
-	background: rgba(128, 128, 128, 0.08);
-	border-left: 2px solid var(--accent);
+.session-item.renaming .session-title {
+	opacity: 0.6;
+	animation: pulse 1.2s ease-in-out infinite;
 }
 
 /* Context menu */
@@ -404,6 +429,14 @@ body {
 	outline: none;
 	font-family: inherit;
 }
+.renaming {
+	opacity: 0.6;
+	animation: pulse 1.2s ease-in-out infinite;
+}
+@keyframes pulse {
+	0%, 100% { opacity: 0.6; }
+	50% { opacity: 1; }
+}
 .loading-bar {
 	height: 2px;
 	background: var(--accent);
@@ -430,14 +463,14 @@ body {
 
 /* Terminal tabs */
 .terminal-tab {
-	padding: 3px 6px 3px 10px;
+	padding: 3px 10px;
 	font-size: 12px;
 	cursor: pointer;
 	white-space: nowrap;
 	display: flex;
 	align-items: center;
 	gap: 4px;
-	flex-shrink: 1;
+	flex-shrink: 0;
 	flex-grow: 0;
 	border-radius: 4px;
 	margin: 0;
@@ -445,7 +478,7 @@ body {
 	color: var(--fg);
 	opacity: 0.65;
 	user-select: none;
-	min-width: 0;
+	max-width: 140px;
 	overflow: hidden;
 }
 .terminal-tab:hover {
@@ -462,24 +495,6 @@ body {
 	text-overflow: ellipsis;
 	white-space: nowrap;
 	display: block;
-	max-width: 140px;
-}
-.terminal-tab .close-btn {
-	opacity: 0.5;
-	cursor: pointer;
-	padding: 1px 2px;
-	flex-shrink: 0;
-	border-radius: 3px;
-}
-.terminal-tab .close-btn:hover {
-	opacity: 1;
-	background: rgba(128, 128, 128, 0.3);
-}
-.terminal-tab.active .close-btn {
-	color: var(--accent-fg);
-}
-.terminal-tab.active .close-btn:hover {
-	background: rgba(255, 255, 255, 0.2);
 }
 
 /* Terminal area */
@@ -665,29 +680,6 @@ body {
 .shortcut-row .desc {
 	opacity: 0.7;
 	flex: 1;
-}
-
-/* ===== SESSIONS POPUP ===== */
-.popup {
-	position: absolute;
-	z-index: 200;
-	background: var(--menu-bg);
-	border: 1px solid var(--border);
-	border-radius: 6px;
-	box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
-}
-.sessions-popup {
-	top: 36px;
-	right: 4px;
-	min-width: 280px;
-	max-width: 360px;
-}
-.sessions-popup-scroll {
-	max-height: 350px;
-	overflow-y: auto;
-}
-.sessions-popup .session-item {
-	padding: 5px 8px;
 }
 
 /* ===== CONFIRMATION DIALOG ===== */

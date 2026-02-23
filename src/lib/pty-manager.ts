@@ -54,12 +54,23 @@ class PtySession {
 		const cmd = command || "claude";
 		log.log(`PTY #${id} spawning: shell=${shell}, cmd=${cmd}, cwd=${workspacePath}`);
 
+		const env: Record<string, string | undefined> = { ...process.env };
+		// Critical for embedded xterm.js context
+		env.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION = "false";
+		env.DISABLE_AUTOUPDATER = "1";
+		env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS = "1";
+		env.CLAUDE_CODE_DISABLE_TERMINAL_TITLE = "1";
+		env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
+		env.CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL = "1";
+
+		log.log(`PTY #${id} created: cmd=${cmd}, cwd=${workspacePath}`);
+
 		this.process = pty.spawn(shell, ["-l", "-c", `exec ${cmd}`], {
 			name: "xterm-256color",
 			cols: 80,
 			rows: 24,
 			cwd: workspacePath,
-			env: { ...process.env },
+			env,
 		});
 
 		this.process.onData((data) => onData(this.id, data));
@@ -111,7 +122,9 @@ export class PtyManager {
 			id,
 			label,
 			this._wp,
-			(sid, data) => this._onData?.(sid, data),
+			(sid, data) => {
+				this._onData?.(sid, data);
+			},
 			(sid, code) => {
 				this._sessions.delete(sid);
 				this._onExit?.(sid, code);

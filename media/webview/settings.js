@@ -35,21 +35,26 @@
 		var text = document.getElementById("hookStatusText");
 		var sub = document.getElementById("hookStatusSub");
 		var btn = document.getElementById("hookActionBtn");
+		var gear1 = document.getElementById("btnSettings");
+		var gear2 = document.getElementById("btnSettings2");
+		var needsBadge = status !== "installed";
+		if (gear1) gear1.classList.toggle("has-badge", needsBadge);
+		if (gear2) gear2.classList.toggle("has-badge", needsBadge);
 		if (status === "installed") {
 			dot.className = "hook-dot ok";
-			text.textContent = "Hook installed";
-			sub.textContent = "Changes by Claude Code are tracked automatically";
+			text.textContent = "Configured";
+			sub.textContent = "Change tracking, OS notifications";
 			btn.style.display = "none";
 		} else if (status === "outdated") {
-			dot.className = "hook-dot warn";
-			text.textContent = "Hook outdated";
-			sub.textContent = "Update required for latest features";
+			dot.className = "hook-dot err";
+			text.textContent = "Update available";
+			sub.textContent = "New version of hooks and settings";
 			btn.textContent = "Update";
 			btn.style.display = "";
 		} else {
 			dot.className = "hook-dot err";
-			text.textContent = "Hook not installed";
-			sub.textContent = "Required to track changes by Claude Code";
+			text.textContent = "Not configured";
+			sub.textContent = "Hooks and notifications";
 			btn.textContent = "Install";
 			btn.style.display = "";
 		}

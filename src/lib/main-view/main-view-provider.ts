@@ -27,6 +27,11 @@ export class MainViewProvider implements vscode.WebviewViewProvider {
 		this._sessionMgr = new SessionManager(_wp, _ptyManager, workspaceState, (msg) =>
 			this._postMessage(msg),
 		);
+		this._sessionMgr.watchSessionNames();
+	}
+
+	dispose(): void {
+		this._sessionMgr.dispose();
 	}
 
 	setReviewManager(rm: ReviewManager): void {

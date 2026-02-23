@@ -1,129 +1,84 @@
 # Claude Code Review
 
-VS Code / Cursor расширение для интерактивного code review изменений, сделанных Claude CLI. Управление сессиями Claude, просмотр diff, принятие/откат изменений по отдельным hunk-ам — всё в боковой панели редактора.
+Interactive code review extension for VS Code / Cursor. Manages Claude CLI sessions, tracks file changes automatically via hooks, and lets you accept or revert each change hunk-by-hunk — all from the sidebar.
 
-## Возможности
+## Features
 
-- **Code Review** — интерактивный diff с кнопками Keep / Undo на каждый hunk прямо в редакторе (CodeLens)
-- **Сессии Claude** — запуск и управление несколькими Claude CLI сессиями через встроенный терминал (xterm.js + node-pty)
-- **Автозахват изменений** — PostToolUse hook автоматически отслеживает файлы, которые Claude редактирует через Edit/Write
-- **Навигация** — переход между файлами и hunk-ами, статус-бар с контекстными действиями
-- **Отправка контекста** — отправка выделенного кода или файла в активную сессию Claude (`Alt+K`)
+### Embedded Claude Sessions
 
-## Требования
+Run multiple Claude CLI sessions in built-in terminals (xterm.js + node-pty). Start new conversations, resume old ones, drag & drop files for context.
 
-- VS Code `≥ 1.100.0` или Cursor
-- Claude CLI (`claude`) установлен и доступен в PATH
+![Sessions](media/screenshots/sessions.png)
+
+### Hunk-Level Code Review
+
+Every file Claude modifies is captured automatically. Review inline diffs with **Keep** / **Undo** CodeLens buttons on each hunk. Navigate between changes, accept or reject per-file or all at once.
+
+![Review](media/screenshots/review.png)
+
+### Review Toolbar & Notifications
+
+Sidebar toolbar shows progress across all changed files. Undo/redo history for review decisions. OS-level notifications ensure you never miss when Claude needs your attention.
+
+![Toolbar](media/screenshots/toolbar.png)
+
+## Requirements
+
+- VS Code `>= 1.100.0` or Cursor
+- [Claude CLI](https://docs.anthropic.com/en/docs/claude-code) installed and in PATH
 - Git
 
-## Установка
-
-Сборка не требуется — расширение написано на чистом JavaScript без зависимостей.
-
-Скопируйте содержимое репозитория в папку расширений:
+## Install
 
 ```bash
-# Для Cursor и VS Code одновременно:
-cp -r /path/to/claude-code-review/* ~/.cursor/extensions/local.claude-code-review-8.0.0/
-cp -r /path/to/claude-code-review/* ~/.vscode/extensions/local.claude-code-review-8.0.0/
+# Build
+yarn install && yarn build
+
+# Or production build (minified)
+yarn build:prod
 ```
 
-> **Важно:** имя папки должно соответствовать формату `local.claude-code-review-<version>/`, где version совпадает с `version` в `package.json`. После копирования перезапустите редактор.
+The build script automatically deploys to `~/.vscode/extensions/`. Reload the editor after install.
 
-## Использование
+## Quick Start
 
-### Быстрый старт
+1. Open the **Claude Code Review** sidebar (Activity Bar icon or `Ctrl+Alt+B`)
+2. Click **New Session** to launch Claude CLI
+3. Work with Claude — modified files appear in the review queue automatically
+4. Review diffs, keep or undo changes per hunk
 
-1. Откройте боковую панель **Claude Code Review** (иконка в Activity Bar или `Ctrl+Alt+B`)
-2. Нажмите **New Session** для запуска Claude CLI в встроенном терминале
-3. Работайте с Claude — изменённые файлы автоматически появятся в очереди на review
-4. Просматривайте diff, принимайте или откатывайте изменения по hunk-ам
+## Keybindings
 
-### Горячие клавиши
+| Shortcut     | Action                        |
+| ------------ | ----------------------------- |
+| `Ctrl+Alt+B` | Toggle sidebar panel          |
+| `Alt+K`      | Send selection to Claude      |
 
-| Комбинация   | Действие                            |
-| ------------ | ----------------------------------- |
-| `Ctrl+Alt+B` | Показать/скрыть панель              |
-| `Alt+K`      | Отправить выделение в сессию Claude |
+All commands are available via Command Palette (`Ctrl+Shift+P`) under `Claude Code Review:`.
 
-### Команды
-
-Все команды доступны через Command Palette (`Ctrl+Shift+P`):
-
-- `Claude Code Review: Toggle Panel` — показать/скрыть панель
-- `Claude Code Review: Start Review` — начать review
-- `Claude Code Review: Keep All Changes` / `Undo All Changes` — принять/откатить все
-- `Claude Code Review: New Claude Session` — новая сессия
-- `Claude Code Review: Install Hook` — установить PostToolUse hook
-- `Claude Code Review: Send Selection to Session` — отправить выделение
-- `Claude Code Review: Previous/Next File` — навигация по файлам
-- `Claude Code Review: Previous/Next Change` — навигация по hunk-ам
-
-### Hook
-
-При первом запуске расширение предложит установить PostToolUse hook в `.claude/hooks/`. Hook отслеживает вызовы Edit/Write инструментов Claude и отправляет пути изменённых файлов на локальный HTTP-сервер расширения (порт `27182`).
-
-## Архитектура
+## How It Works
 
 ```
 Claude CLI (PTY)
-    │  PostToolUse hook (Edit/Write)
+    │  PreToolUse / PostToolUse hooks
     ▼
-Hook Script (.claude/hooks/ccr-review-hook.sh)
-    │  HTTP POST /changed
+Hook Scripts (.claude/hooks/ccr-*.sh)
+    │  HTTP POST → localhost:27182
     ▼
-HTTP Server (port 27182)
-    │  addFileToReview()
+Extension HTTP Server
+    │  Captures before/after file content
     ▼
-State (activeReviews Map)
-    │
-    ├──→ CodeLens Provider (Keep/Undo кнопки в редакторе)
-    ├──→ Decorations (подсветка добавленных/удалённых строк)
-    └──→ Webview Sidebar (терминал + список файлов на review)
+Review State → CodeLens + Diff Decorations + Sidebar UI
 ```
 
-### Структура проекта
+Hooks are installed automatically on first run. They also block `/resume` and `/exit` in embedded sessions (use UI controls instead) and send OS notifications via the `Notification` hook.
 
-```
-├── extension.js          — точка входа, регистрация команд
-├── package.json          — манифест расширения
-├── lib/
-│   ├── main-view.js      — WebviewViewProvider (sidebar UI + терминал)
-│   ├── actions.js        — workflow review (accept/reject hunk/file/all)
-│   ├── review.js         — модель FileReview, слияние hunk-ов
-│   ├── diff.js           — парсинг unified diff, работа с git
-│   ├── hook-manager.js   — установка и валидация hook-скрипта
-│   ├── pty-manager.js    — управление PTY-сессиями (node-pty)
-│   ├── sessions.js       — обнаружение существующих сессий Claude
-│   ├── server.js         — HTTP-сервер (мост для hook)
-│   ├── state.js          — централизованное состояние
-│   ├── codelens.js       — CodeLens провайдер
-│   ├── decorations.js    — декорации редактора
-│   ├── status-bar.js     — контекстный статус-бар
-│   └── log.js            — логирование
-└── media/
-    ├── icon.svg          — иконка расширения
-    ├── xterm.min.js      — терминал xterm.js
-    ├── xterm.css         — стили xterm
-    └── addon-fit.min.js  — addon для авторесайза терминала
-```
+## Settings
 
-## Настройки
+| Setting                       | Default  | Description                          |
+| ----------------------------- | -------- | ------------------------------------ |
+| `claudeCodeReview.cliCommand` | `claude` | CLI binary name (`claude` or custom) |
 
-| Параметр                      | По умолчанию | Описание                                      |
-| ----------------------------- | ------------ | --------------------------------------------- |
-| `claudeCodeReview.cliCommand` | `claude`     | CLI команда для сессий (`claude` или `happy`) |
+## License
 
-## Разработка
-
-Для внесения изменений:
-
-1. Отредактируйте файлы в репозитории
-2. Скопируйте в папку расширений:
-    ```bash
-    cp -r ./* ~/.cursor/extensions/local.claude-code-review-8.0.0/
-    cp -r ./* ~/.vscode/extensions/local.claude-code-review-8.0.0/
-    ```
-3. Перезапустите редактор (`Developer: Reload Window`)
-
-Сборка не требуется — все изменения применяются сразу после копирования и перезагрузки.
+MIT

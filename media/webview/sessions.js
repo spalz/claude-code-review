@@ -3,21 +3,33 @@
 	"use strict";
 
 	var cachedSessions = [];
+	var cachedArchivedSessions = [];
 	var openClaudeIds = new Set();
+	var activeClaudeId = null;
 	var ctxTarget = null;
 
 	window.updateOpenClaudeIds = function (ids) {
 		openClaudeIds = new Set(ids || []);
 	};
 
+	window.setActiveClaudeId = function (id) {
+		activeClaudeId = id;
+	};
+
 	window.getCachedSessions = function () {
 		return cachedSessions;
+	};
+
+	window.findCachedSession = function (claudeId) {
+		return cachedSessions.find(function (x) { return x.id === claudeId; })
+			|| cachedArchivedSessions.find(function (x) { return x.id === claudeId; });
 	};
 
 	// --- Sessions rendering ---
 
 	window.renderSessions = function (sessions) {
 		if (sessions) cachedSessions = sessions;
+		if (sessions && window.diagLog) diagLog("session", "renderSessions", { count: sessions.length });
 		var el = document.getElementById("sessionsList");
 		if (!cachedSessions || cachedSessions.length === 0) {
 			el.innerHTML =
@@ -30,14 +42,17 @@
 
 	function buildSessionListHtml(sessions) {
 		var html = "";
+		var renamingId = pendingRename ? pendingRename.sessionId : null;
 		sessions.forEach(function (s) {
 			var date = new Date(s.timestamp);
 			var ago = timeAgo(date);
 			var msgs = s.messageCount ? s.messageCount + " msgs" : "";
 			var meta = [ago, msgs].filter(Boolean).join(" \u00b7 ");
 			var isOpen = openClaudeIds.has(s.id);
+			var isActive = s.id === activeClaudeId;
+			var isRenaming = s.id === renamingId;
 			html +=
-				'<div class="session-item' + (isOpen ? " open" : "") + '" data-sid="' + s.id + '">';
+				'<div class="session-item' + (isActive ? " open" : "") + (isRenaming ? " renaming" : "") + '" data-sid="' + s.id + '">';
 			html += '<span class="dot ' + (isOpen ? "active" : "past") + '"></span>';
 			html += '<div class="info"><div class="session-title">' + esc(s.title) + "</div>";
 			html +=
@@ -55,7 +70,7 @@
 		container.querySelectorAll(".session-item").forEach(function (item) {
 			var sid = item.dataset.sid;
 			item.onclick = function () {
-				resumeSession(sid);
+				resumeSession(sid, false);
 			};
 			item.oncontextmenu = function (e) {
 				showCtxMenu(e, sid);
@@ -71,7 +86,7 @@
 		return Math.floor(sec / 86400) + "d ago";
 	}
 
-	function resumeSession(claudeId) {
+	function resumeSession(claudeId, isArchived) {
 		var item = document.querySelector('.session-item[data-sid="' + claudeId + '"]');
 		if (item) item.style.opacity = "0.5";
 		var el = document.getElementById("sessionsList");
@@ -79,6 +94,10 @@
 		loader.className = "loading-bar";
 		loader.id = "sessionLoader";
 		el.parentElement.insertBefore(loader, el);
+		diagLog("loading", "bar-shown", { reason: "resume", claudeId: claudeId });
+		if (isArchived) {
+			send("unarchive-session", { sessionId: claudeId });
+		}
 		send("resume-claude-session", { claudeSessionId: claudeId });
 	}
 
@@ -132,7 +151,7 @@
 
 	document.addEventListener("click", hideCtxMenu);
 	document.addEventListener("contextmenu", function (e) {
-		if (!e.target.closest(".session-item")) hideCtxMenu();
+		if (!e.target.closest(".session-item") && !e.target.closest(".terminal-tab")) hideCtxMenu();
 	});
 
 	function handleCtxAction(action) {
@@ -166,6 +185,8 @@
 
 	// --- Inline rename ---
 
+	var pendingRename = null; // { sessionId, oldTitle }
+
 	function startInlineRename(sessionId, currentTitle) {
 		var item = document.querySelector('.session-item[data-sid="' + sessionId + '"]');
 		if (!item) return;
@@ -186,8 +207,17 @@
 		function commit() {
 			var newName = input.value.trim();
 			if (newName && newName !== currentTitle) {
+				// Optimistic update: change name in cache immediately
+				pendingRename = { sessionId: sessionId, oldTitle: currentTitle };
+				cachedSessions.forEach(function (s) {
+					if (s.id === sessionId) s.title = newName;
+				});
+				// Update tab name immediately too
+				if (window.renameTerminalTab) renameTerminalTab(sessionId, newName);
+				// Re-render list with new name + loading indicator
+				renderSessions(null);
+				// Send rename to extension (background process)
 				send("rename-session", { sessionId: sessionId, newName: newName });
-				if (window.renameTerminalTab) window.renameTerminalTab(sessionId, newName);
 			} else {
 				renderSessions(null);
 			}
@@ -213,13 +243,30 @@
 		};
 	}
 
+	window.handleRenameResult = function (claudeId, newName, success) {
+		if (!success && pendingRename && pendingRename.sessionId === claudeId) {
+			// Revert cached name on failure
+			cachedSessions.forEach(function (s) {
+				if (s.id === claudeId) s.title = pendingRename.oldTitle;
+			});
+			// Revert tab name
+			if (window.revertTabRename) revertTabRename(claudeId);
+		}
+		pendingRename = null;
+		// Re-render — removes renaming indicator
+		renderSessions(null);
+	};
+
 	// --- View toggle ---
 
 	window.showSessionsList = function () {
 		var loader = document.getElementById("sessionLoader");
-		if (loader) loader.remove();
+		if (loader) {
+			diagLog("loading", "bar-removed", { reason: "showSessionsList" });
+			loader.remove();
+		}
 		switchMode("sessions");
-		renderSessions(null);
+		send("refresh-sessions");
 	};
 
 	window.showTerminalView = function () {
@@ -243,72 +290,8 @@
 	document.getElementById("btnSettings2").addEventListener("click", function () {
 		showSettings();
 	});
-	document.getElementById("btnSessionsList").addEventListener("click", function (e) {
-		e.stopPropagation();
-		var popup = document.getElementById("sessionsPopup");
-		if (popup.style.display === "none") {
-			loadSessionsPopup(0);
-			popup.style.display = "";
-		} else {
-			popup.style.display = "none";
-		}
-	});
-
-	// --- Sessions popup with lazy loading ---
-
-	var popupOffset = 0;
-	var popupLoading = false;
-
-	window.loadSessionsPopup = function (offset) {
-		popupOffset = offset;
-		popupLoading = true;
-		document.getElementById("sessionsPopupLoader").style.display = "";
-		if (offset === 0) {
-			document.getElementById("sessionsPopupList").innerHTML = "";
-		}
-		send("load-sessions", { offset: offset, limit: 10 });
-	};
-
-	window.renderSessionsPopup = function (sessions, offset, hasMore) {
-		popupLoading = false;
-		document.getElementById("sessionsPopupLoader").style.display = "none";
-
-		var list = document.getElementById("sessionsPopupList");
-		if (offset === 0) list.innerHTML = "";
-
-		var html = buildSessionListHtml(sessions);
-		var fragment = document.createElement("div");
-		fragment.innerHTML = html;
-
-		// Bind click handlers for popup items
-		fragment.querySelectorAll(".session-item").forEach(function (item) {
-			var sid = item.dataset.sid;
-			item.onclick = function () {
-				document.getElementById("sessionsPopup").style.display = "none";
-				resumeSession(sid);
-			};
-		});
-
-		while (fragment.firstChild) {
-			list.appendChild(fragment.firstChild);
-		}
-
-		// Store hasMore for scroll handler
-		list.dataset.hasMore = hasMore ? "1" : "0";
-		popupOffset = offset + sessions.length;
-	};
-
-	// Scroll-to-load-more in popup
-	document.getElementById("sessionsPopupScroll").addEventListener("scroll", function () {
-		var el = this;
-		var list = document.getElementById("sessionsPopupList");
-		if (
-			!popupLoading &&
-			list.dataset.hasMore === "1" &&
-			el.scrollTop + el.clientHeight >= el.scrollHeight - 30
-		) {
-			loadSessionsPopup(popupOffset);
-		}
+	document.getElementById("btnSessionsList").addEventListener("click", function () {
+		showSessionsList();
 	});
 
 	// --- Archive section ---
@@ -353,6 +336,7 @@
 	document.getElementById("archiveToggle").addEventListener("click", toggleArchive);
 
 	window.renderArchivedSessions = function (sessions) {
+		if (sessions) cachedArchivedSessions = sessions;
 		var list = document.getElementById("archiveList");
 		if (!sessions || sessions.length === 0) {
 			list.innerHTML = '<div class="empty" style="padding:12px;font-size:12px">No archived sessions</div>';
@@ -362,7 +346,7 @@
 		list.querySelectorAll(".session-item").forEach(function (item) {
 			var sid = item.dataset.sid;
 			item.onclick = function () {
-				resumeSession(sid);
+				resumeSession(sid, true);
 			};
 			item.oncontextmenu = function (e) {
 				showCtxMenu(e, sid, true);

@@ -20,7 +20,9 @@
 	window.viewMode = "sessions";
 
 	window.switchMode = function (mode) {
+		var previousMode = window.viewMode;
 		window.viewMode = mode;
+		if (window.diagLog) diagLog("view", "switchMode", { from: previousMode, to: mode });
 		var sessionMode = document.getElementById("headerSessionMode");
 		var terminalMode = document.getElementById("headerTerminalMode");
 		var sessionsView = document.getElementById("sessionsView");
@@ -80,6 +82,7 @@
 	// Settings overlay
 	window.showSettings = function () {
 		document.getElementById("settingsOverlay").style.display = "";
+		send("check-hook-status");
 	};
 
 	window.hideSettings = function () {
@@ -90,15 +93,4 @@
 		hideSettings();
 	});
 
-	// Click-outside to close popups
-	document.addEventListener("click", function (e) {
-		var sessionsPopup = document.getElementById("sessionsPopup");
-		if (
-			sessionsPopup.style.display !== "none" &&
-			!sessionsPopup.contains(e.target) &&
-			!e.target.closest("#btnSessionsList")
-		) {
-			sessionsPopup.style.display = "none";
-		}
-	});
 })();

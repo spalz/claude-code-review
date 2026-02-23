@@ -6,7 +6,7 @@ import { MainViewProvider } from "./lib/main-view";
 import { PtyManager } from "./lib/pty-manager";
 import { applyDecorations } from "./lib/decorations";
 import { startServer, stopServer, setAddFileHandler, setWorkspacePath } from "./lib/server";
-import { checkAndPrompt, doInstall } from "./lib/hook-manager";
+import { checkAndPrompt, doInstall } from "./lib/hooks";
 import { createReviewStatusBar, updateReviewStatusBar } from "./lib/status-bar";
 import { ReviewManager } from "./lib/review-manager";
 import { registerDocumentListener } from "./lib/document-listener";

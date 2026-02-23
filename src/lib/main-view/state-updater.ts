@@ -99,6 +99,12 @@ export function getKeybindings(): KeybindingInfo[] {
 	const descriptions: Record<string, string> = {
 		"ccr.togglePanel": "Toggle panel",
 		"ccr.sendSelection": "Send selection to active session",
+		"ccr.acceptHunk": "Accept change",
+		"ccr.rejectHunk": "Reject change",
+		"ccr.nextHunk": "Next change",
+		"ccr.prevHunk": "Previous change",
+		"ccr.undo": "Undo review action",
+		"ccr.redo": "Redo review action",
 	};
 
 	log.log(`_getKeybindings: found ${bindings.length} bindings, isMac=${isMac}`);

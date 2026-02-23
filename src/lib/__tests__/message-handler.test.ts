@@ -4,10 +4,10 @@ vi.mock("vscode", () => import("./mocks/vscode"));
 vi.mock("../log", () => ({ log: vi.fn() }));
 
 const mockSessions = vi.hoisted(() => ({
-	renameSession: vi.fn(),
 	deleteSession: vi.fn(),
 	archiveSession: vi.fn(),
 	unarchiveSession: vi.fn(),
+	saveSessionName: vi.fn(),
 	listSessions: vi.fn().mockReturnValue({ sessions: [], hasMore: false, archivedCount: 0 }),
 	listArchivedSessions: vi.fn().mockReturnValue([]),
 }));
@@ -30,6 +30,7 @@ vi.mock("../actions", () => mockActions);
 import { handleWebviewMessage } from "../main-view/message-handler";
 import type { MessageContext } from "../main-view/message-handler";
 import type { ExtensionToWebviewMessage, HookStatus } from "../../types";
+import { window as mockVscodeWindow } from "./mocks/vscode";
 
 function createMockContext(overrides?: Partial<MessageContext>): MessageContext {
 	return {
@@ -64,22 +65,49 @@ beforeEach(() => {
 // ─── rename-session ──────────────────────────────────────────────────
 
 describe("rename-session", () => {
-	it("calls renameSession with correct arguments", () => {
+	it("saves name to session-names.json and sends success", () => {
 		const ctx = createMockContext();
 		handleWebviewMessage(
 			{ type: "rename-session", sessionId: "sess-abc", newName: "New Name" },
 			ctx,
 		);
-		expect(mockSessions.renameSession).toHaveBeenCalledWith("/ws", "sess-abc", "New Name");
+		expect(mockSessions.saveSessionName).toHaveBeenCalledWith("/ws", "sess-abc", "New Name");
+		expect(ctx.postMessage).toHaveBeenCalledWith({
+			type: "rename-result",
+			claudeId: "sess-abc",
+			newName: "New Name",
+			success: true,
+		});
+		expect(ctx.sessionMgr.refreshClaudeSessions).toHaveBeenCalled();
 	});
 
-	it("refreshes sessions list after rename", () => {
+	it("never injects /rename into active PTY", () => {
+		const ctx = createMockContext();
+		(ctx.sessionMgr.findPtyByClaudeId as ReturnType<typeof vi.fn>).mockReturnValue(5);
+		handleWebviewMessage(
+			{ type: "rename-session", sessionId: "sess-abc", newName: "New Name" },
+			ctx,
+		);
+		expect(mockSessions.saveSessionName).toHaveBeenCalledWith("/ws", "sess-abc", "New Name");
+		expect(ctx.ptyManager.writeToSession).not.toHaveBeenCalled();
+	});
+
+	it("sends rename-result with success=false on write error", () => {
+		mockSessions.saveSessionName.mockImplementationOnce(() => {
+			throw new Error("EACCES");
+		});
 		const ctx = createMockContext();
 		handleWebviewMessage(
 			{ type: "rename-session", sessionId: "sess-abc", newName: "New Name" },
 			ctx,
 		);
-		expect(ctx.sessionMgr.refreshClaudeSessions).toHaveBeenCalled();
+		expect(ctx.postMessage).toHaveBeenCalledWith({
+			type: "rename-result",
+			claudeId: "sess-abc",
+			newName: "New Name",
+			success: false,
+		});
+		expect(ctx.sessionMgr.refreshClaudeSessions).not.toHaveBeenCalled();
 	});
 });
 
@@ -212,35 +240,23 @@ describe("webview-ready", () => {
 	});
 });
 
-// ─── load-sessions ───────────────────────────────────────────────────
+// ─── blocked-slash-command ───────────────────────────────────────────
 
-describe("load-sessions", () => {
-	it("calls listSessions with offset and limit", () => {
-		const mockResult = {
-			sessions: [{ id: "s1", title: "Test", timestamp: "2024-01-01", size: 100, messageCount: 5, branch: null }],
-			hasMore: true,
-			archivedCount: 0,
-		};
-		mockSessions.listSessions.mockReturnValue(mockResult);
+describe("blocked-slash-command", () => {
+	it("shows warning message for /exit", () => {
 		const ctx = createMockContext();
-		handleWebviewMessage({ type: "load-sessions", offset: 10, limit: 5 }, ctx);
-		expect(mockSessions.listSessions).toHaveBeenCalledWith("/ws", 5, 10);
+		handleWebviewMessage({ type: "blocked-slash-command", command: "/exit" }, ctx);
+		expect(mockVscodeWindow.showWarningMessage).toHaveBeenCalledWith(
+			"/exit is disabled in embedded sessions. Use UI controls instead.",
+		);
 	});
 
-	it("posts sessions-page message", () => {
-		const mockResult = {
-			sessions: [{ id: "s1", title: "Test", timestamp: "2024-01-01", size: 100, messageCount: 5, branch: null }],
-			hasMore: false,
-			archivedCount: 0,
-		};
-		mockSessions.listSessions.mockReturnValue(mockResult);
+	it("shows warning message for /resume", () => {
 		const ctx = createMockContext();
-		handleWebviewMessage({ type: "load-sessions", offset: 0, limit: 10 }, ctx);
-		expect(ctx.postMessage).toHaveBeenCalledWith({
-			type: "sessions-page",
-			sessions: mockResult.sessions,
-			offset: 0,
-			hasMore: false,
-		});
+		handleWebviewMessage({ type: "blocked-slash-command", command: "/resume" }, ctx);
+		expect(mockVscodeWindow.showWarningMessage).toHaveBeenCalledWith(
+			"/resume is disabled in embedded sessions. Use UI controls instead.",
+		);
 	});
 });
+

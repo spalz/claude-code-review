@@ -5,12 +5,11 @@ import * as path from "path";
 import * as log from "../log";
 import * as state from "../state";
 import {
-	renameSession,
 	deleteSession,
 	archiveSession,
 	unarchiveSession,
-	listSessions,
 	listArchivedSessions,
+	saveSessionName,
 } from "../sessions";
 import type { PtyManager } from "../pty-manager";
 import type { SessionManager } from "./session-manager";
@@ -35,7 +34,7 @@ export function handleWebviewMessage(
 	msg: Record<string, unknown>,
 	ctx: MessageContext,
 ): MessageResult {
-	if (msg.type !== "terminal-input") {
+	if (msg.type !== "terminal-input" && msg.type !== "diag-log") {
 		log.log(`webview msg: ${msg.type as string}`);
 	}
 
@@ -94,11 +93,18 @@ export function handleWebviewMessage(
 			break;
 
 		case "rename-session": {
-			const sessionId = msg.sessionId as string;
+			const claudeId = msg.sessionId as string;
 			const newName = msg.newName as string;
-			log.log(`rename: ${sessionId.slice(0, 8)} -> "${newName}"`);
-			renameSession(ctx.wp, sessionId, newName);
-			ctx.sessionMgr.refreshClaudeSessions();
+			log.log(`rename: ${claudeId.slice(0, 8)} -> "${newName}"`);
+			try {
+				saveSessionName(ctx.wp, claudeId, newName);
+				log.log(`rename: ${claudeId.slice(0, 8)} saved to session-names.json`);
+				ctx.postMessage({ type: "rename-result", claudeId, newName, success: true });
+				ctx.sessionMgr.refreshClaudeSessions();
+			} catch (err) {
+				log.log(`rename: ${claudeId.slice(0, 8)} failed — ${(err as Error).message}`);
+				ctx.postMessage({ type: "rename-result", claudeId, newName, success: false });
+			}
 			break;
 		}
 
@@ -140,6 +146,12 @@ export function handleWebviewMessage(
 			ctx.postMessage({ type: "archived-sessions-list", sessions });
 			break;
 		}
+
+		case "blocked-slash-command":
+			vscode.window.showWarningMessage(
+				`${msg.command as string} is disabled in embedded sessions. Use UI controls instead.`,
+			);
+			break;
 
 		case "terminal-input":
 			ctx.ptyManager.writeToSession(msg.sessionId as number, msg.data as string);
@@ -274,6 +286,13 @@ export function handleWebviewMessage(
 			vscode.commands.executeCommand("ccr.installHook");
 			break;
 
+		case "check-hook-status": {
+			const { checkAndPrompt } = require("../hooks") as typeof import("../hooks");
+			const hookStatus = checkAndPrompt(ctx.wp);
+			ctx.postMessage({ type: "hook-status", status: hookStatus });
+			break;
+		}
+
 		case "open-keybindings":
 			log.log("open-keybindings: opening VS Code keyboard shortcuts");
 			vscode.commands.executeCommand(
@@ -325,25 +344,16 @@ export function handleWebviewMessage(
 			break;
 		}
 
-		case "load-sessions": {
-			const offset = (msg.offset as number) || 0;
-			const limit = (msg.limit as number) || 10;
-			const result = listSessions(ctx.wp, limit, offset);
-			ctx.postMessage({
-				type: "sessions-page",
-				sessions: result.sessions,
-				offset,
-				hasMore: result.hasMore,
-			});
-			break;
-		}
-
 		case "accept-all-confirm":
 			vscode.commands.executeCommand("ccr.acceptAll");
 			break;
 
 		case "reject-all-confirm":
 			vscode.commands.executeCommand("ccr.rejectAll");
+			break;
+
+		case "diag-log":
+			// Silently consumed — webview diagnostics stay in browser console
 			break;
 	}
 

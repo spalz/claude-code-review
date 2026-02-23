@@ -14,6 +14,9 @@ export type ExtensionToWebviewMessage =
 			name: string;
 			claudeId: string | null;
 	  }
+	| { type: "update-terminal-claude-id"; sessionId: number; claudeId: string }
+	| { type: "rename-terminal-tab"; claudeId: string; newName: string }
+	| { type: "rename-result"; claudeId: string; newName: string; success: boolean }
 	| { type: "terminal-session-closed"; sessionId: number }
 	| { type: "terminal-output"; sessionId: number; data: string }
 	| { type: "terminal-exit"; sessionId: number; exitCode: number }
@@ -26,12 +29,7 @@ export type ExtensionToWebviewMessage =
 			review: ReviewStateUpdate;
 			activeSessions: PtySessionInfo[];
 	  }
-	| {
-			type: "sessions-page";
-			sessions: SessionInfo[];
-			offset: number;
-			hasMore: boolean;
-	  };
+;
 
 export type WebviewToExtensionMessage =
 	| { type: "webview-ready" }
@@ -67,8 +65,9 @@ export type WebviewToExtensionMessage =
 	| { type: "redo-review" }
 	| { type: "navigate-hunk"; direction: -1 | 1 }
 	| { type: "review-next-file" }
-	| { type: "load-sessions"; offset: number; limit: number }
 	| { type: "accept-all-confirm" }
 	| { type: "reject-all-confirm" }
 	| { type: "keep-current-file" }
-	| { type: "undo-current-file" };
+	| { type: "undo-current-file" }
+	| { type: "check-hook-status" }
+	| { type: "diag-log"; category: string; message: string; data: Record<string, unknown> | null; timestamp: number };

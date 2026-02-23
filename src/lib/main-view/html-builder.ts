@@ -14,6 +14,7 @@ export function buildWebviewHtml(webview: vscode.Webview, extensionUri: vscode.U
 	const fitJs = mediaUri("addon-fit.min.js");
 	const stylesCss = webviewUri("styles.css");
 	const coreJs = webviewUri("core.js");
+	const diagJs = webviewUri("diag.js");
 	const sessionsJs = webviewUri("sessions.js");
 	const terminalsJs = webviewUri("terminals.js");
 	const reviewJs = webviewUri("review.js");
@@ -52,11 +53,11 @@ export function buildWebviewHtml(webview: vscode.Webview, extensionUri: vscode.U
     </div>
     <!-- Terminal tabs mode -->
     <div id="headerTerminalMode" class="header-mode" style="display:none">
+      <span class="header-icon codicon codicon-arrow-left" id="btnSessionsList" title="Sessions"></span>
       <div class="terminal-tabs-area" id="terminalBar"></div>
       <div class="header-actions">
         <span class="header-icon codicon codicon-add" id="btnNewChat2" title="New Chat"></span>
         <span class="header-icon codicon codicon-settings-gear" id="btnSettings2" title="Settings"></span>
-        <span class="header-icon codicon codicon-list-unordered" id="btnSessionsList" title="Sessions"></span>
       </div>
     </div>
   </div>
@@ -76,12 +77,12 @@ export function buildWebviewHtml(webview: vscode.Webview, extensionUri: vscode.U
         </button>
         <div class="archive-list" id="archiveList" style="display:none"></div>
       </div>
-      <div class="ctx-menu" id="ctxMenu" style="display:none"></div>
     </div>
     <div id="terminalView" style="display:none">
       <div class="terminals-area" id="terminalsArea"></div>
     </div>
   </div>
+  <div class="ctx-menu" id="ctxMenu" style="display:none"></div>
 </div>
 
 <!-- SETTINGS OVERLAY -->
@@ -92,7 +93,7 @@ export function buildWebviewHtml(webview: vscode.Webview, extensionUri: vscode.U
   </div>
   <div class="settings-body">
     <div class="settings-section">
-      <div class="settings-title">Review Hook</div>
+      <div class="settings-title">Integration</div>
       <div class="hook-status" id="hookStatusBox">
         <span class="hook-dot warn" id="hookDot"></span>
         <div class="hook-info">
@@ -130,14 +131,6 @@ export function buildWebviewHtml(webview: vscode.Webview, extensionUri: vscode.U
   </div>
 </div>
 
-<!-- SESSIONS POPUP (lazy load) -->
-<div class="popup sessions-popup" id="sessionsPopup" style="display:none">
-  <div class="sessions-popup-scroll" id="sessionsPopupScroll">
-    <div id="sessionsPopupList"></div>
-    <div id="sessionsPopupLoader" class="empty" style="display:none;padding:8px">Loading...</div>
-  </div>
-</div>
-
 <!-- CONFIRMATION DIALOG -->
 <div class="confirm-overlay" id="confirmOverlay" style="display:none">
   <div class="confirm-dialog">
@@ -152,6 +145,7 @@ export function buildWebviewHtml(webview: vscode.Webview, extensionUri: vscode.U
 <script src="${xtermJs}"></script>
 <script src="${fitJs}"></script>
 <script src="${coreJs}"></script>
+<script src="${diagJs}"></script>
 <script src="${sessionsJs}"></script>
 <script src="${terminalsJs}"></script>
 <script src="${reviewJs}"></script>

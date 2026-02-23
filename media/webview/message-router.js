@@ -7,6 +7,7 @@
 		switch (msg.type) {
 			case "sessions-list":
 				renderSessions(msg.sessions);
+				syncTabNamesFromSessions(msg.sessions);
 				if (typeof updateArchiveButton === "function") {
 					updateArchiveButton(msg.archivedCount || 0);
 				}
@@ -24,6 +25,10 @@
 				break;
 
 			case "activate-terminal": {
+				diagLog("session", "activate-terminal", {
+					sid: msg.sessionId, exists: getTerminals().has(msg.sessionId),
+					prevActive: getActiveTerminalId()
+				});
 				var terminals = getTerminals();
 				if (terminals.has(msg.sessionId)) {
 					activateTerminal(msg.sessionId);
@@ -34,10 +39,42 @@
 
 			case "terminal-session-created": {
 				var loader = document.getElementById("sessionLoader");
+				diagLog("session", "terminal-session-created", {
+					sid: msg.sessionId, name: msg.name, claudeId: msg.claudeId,
+					loaderVisible: !!loader
+				});
 				if (loader) loader.remove();
 				addTerminal(msg.sessionId, msg.name, msg.claudeId);
 				break;
 			}
+
+			case "update-terminal-claude-id": {
+				var tu = getTerminals().get(msg.sessionId);
+				if (tu) {
+					tu.claudeId = msg.claudeId;
+					// Pull title from cached sessions
+					var s = findCachedSession(msg.claudeId);
+					if (s && s.title) {
+						tu.name = s.title;
+						var span = tu.tabEl.querySelector("span:first-child");
+						if (span) span.textContent = s.title;
+					}
+					diagLog("terminal", "claude-id-updated", {
+						sid: msg.sessionId, claudeId: msg.claudeId
+					});
+				}
+				break;
+			}
+
+			case "rename-terminal-tab":
+				renameTerminalTab(msg.claudeId, msg.newName);
+				break;
+
+			case "rename-result":
+				if (typeof handleRenameResult === "function") {
+					handleRenameResult(msg.claudeId, msg.newName, msg.success);
+				}
+				break;
 
 			case "terminal-session-closed":
 				removeTerminal(msg.sessionId);
@@ -46,14 +83,24 @@
 			case "terminal-output": {
 				var t = getTerminals().get(msg.sessionId);
 				if (t) {
+					var before = getTermBufferState(t);
 					t.term.write(msg.data);
 					t.term.scrollToBottom();
+					var after = getTermBufferState(t);
+					diagLogThrottled("output", "write+scrollToBottom", {
+						sid: msg.sessionId, len: msg.data.length,
+						before: before, after: after
+					});
 				}
 				break;
 			}
 
 			case "terminal-exit": {
 				var te = getTerminals().get(msg.sessionId);
+				diagLog("session", "terminal-exit", {
+					sid: msg.sessionId, exitCode: msg.exitCode,
+					buf: te ? getTermBufferState(te) : null
+				});
 				if (te) {
 					te.term.write("\r\n[Process exited with code " + msg.exitCode + "]\r\n");
 					te.exited = true;
@@ -149,9 +196,6 @@
 				}
 				break;
 
-			case "sessions-page":
-				renderSessionsPopup(msg.sessions, msg.offset, msg.hasMore);
-				break;
 		}
 	});
 

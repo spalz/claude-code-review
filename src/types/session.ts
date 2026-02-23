@@ -9,6 +9,8 @@ export interface SessionInfo {
 
 export interface SessionMeta {
 	title: string | null;
+	/** Explicit custom-title from .jsonl (CLI /rename) — highest priority */
+	customTitle: string | null;
 	messageCount: number;
 	branch: string | null;
 }
